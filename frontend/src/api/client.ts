@@ -2,6 +2,7 @@ import axios from 'axios';
 import { supabase } from './supabase';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || '/api';
+let redirectingToLogin = false;
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -24,8 +25,12 @@ client.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid — redirect to login
-      window.location.href = '/login';
+      const isOnLoginPage = window.location.pathname === '/login';
+      if (!isOnLoginPage && !redirectingToLogin) {
+        // Avoid redirect loops when multiple requests fail with 401 simultaneously.
+        redirectingToLogin = true;
+        window.location.assign('/login');
+      }
     }
     return Promise.reject(error);
   }
