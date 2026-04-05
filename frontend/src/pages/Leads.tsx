@@ -94,13 +94,20 @@ const Leads: React.FC = () => {
     setDragOverStage(null);
   };
 
+  // Normalize lead stage — if the backend stage doesn't match our stages, default to 'new'
+  const normalizeStage = (stage: string | null | undefined): string => {
+    if (stage && STAGES.includes(stage)) return stage;
+    return 'new';
+  };
+
   // Filter leads by search
-  const filteredLeads = search
+  const filteredLeads = (search
     ? leads.filter(l =>
         l.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
         l.summary?.toLowerCase().includes(search.toLowerCase())
       )
-    : leads;
+    : leads
+  ).map(l => ({ ...l, stage: normalizeStage(l.stage) }));
 
   // Mobile: further filter by stage
   const mobileLeads = mobileFilter
