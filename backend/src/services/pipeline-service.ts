@@ -232,12 +232,15 @@ export class PipelineService {
     const isPhotoRequest = domain.patterns.photoRequest.test(messageText);
     const isNegotiationRequest = domain.patterns.negotiation.test(messageText);
 
-    // Infer product from context ONLY for photo requests, negotiations, and specific follow-ups
-    // Do NOT infer for browse queries ("kaunsi gaadiya hai?") — that would filter to just one car
+    // Infer product from context ONLY when AI didn't already extract a product name.
+    // If the customer said "Hyundai car photos", AI extracts brand=Hyundai — don't override with Thar from old context.
     let inferredProductName: string | undefined;
-    const shouldInferProduct = isPhotoRequest || isNegotiationRequest ||
+    const alreadyHasProduct = !!analysis.entities?.product_name || !!analysis.entities?.brand;
+    const shouldInferProduct = !alreadyHasProduct && (
+      isPhotoRequest || isNegotiationRequest ||
       (analysis.intent === 'inventory_inquiry' && !analysis.entities?.product_name) ||
-      (analysis.intent === 'pricing_inquiry' && !analysis.entities?.product_name);
+      (analysis.intent === 'pricing_inquiry' && !analysis.entities?.product_name)
+    );
 
     if (shouldInferProduct) {
       inferredProductName = await this.inferProductFromRecentContext(userId, historyStrings);
