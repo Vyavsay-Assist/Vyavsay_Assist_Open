@@ -120,19 +120,23 @@ export class PipelineService {
       content: messageText,
     });
 
-    // 4. Get conversation history for context
+    // 4. Get conversation history for context — load MORE messages for better memory
     const { data: history } = await this.supabase
       .from('wb_messages')
       .select('sender, content')
       .eq('conversation_id', conversation.id)
       .order('created_at', { ascending: true })
-      .limit(20);
+      .limit(50);
 
     const historyStrings = (history || []).map(
       (m: any) => `${m.sender}: ${m.content}`
     );
 
-    // 5. Run AI analysis (now includes entity extraction)
+    // 4.5 Build conversation memory — a compressed summary of what's been discussed
+    // This prevents the AI from asking repetitive questions
+    const conversationMemory = await this.buildConversationMemory(conversation, historyStrings);
+
+    // 5. Run AI analysis (now includes entity extraction + conversation memory)
     const analysis = await analyzeMessage(messageText, historyStrings, {
       business_name: user.business_name || '',
       industry: user.industry || '',
@@ -169,21 +173,37 @@ export class PipelineService {
     }
 
     // 8.5. Schedule appointment reminders
+    console.log(`  [Pipeline] Appointment data:`, JSON.stringify(analysis.appointment));
+
     if (analysis.appointment?.proposed_time_iso) {
-      const serviceName = analysis.appointment.service || 'General Service';
-      await this.supabase.from('wb_tasks').insert({
+      const serviceName = analysis.appointment.service || 'Test Drive';
+      const dueDate = analysis.appointment.proposed_time_iso.split('T')[0];
+      const taskTitle = `📅 Appointment: ${customerName} — ${serviceName}`;
+
+      console.log(`  [Pipeline] ✅ Creating appointment task: "${taskTitle}" on ${dueDate}`);
+
+      const { error: apptError } = await this.supabase.from('wb_tasks').insert({
         user_id: userId,
         conversation_id: conversation.id,
-        title: `📅 Appointment: ${customerName} — ${serviceName}`,
-        due_date: analysis.appointment.proposed_time_iso.split('T')[0],
+        title: taskTitle,
+        due_date: dueDate,
         is_completed: false,
       });
+
+      if (apptError) {
+        console.error(`  [Pipeline] ❌ Failed to create appointment task:`, apptError);
+      } else {
+        console.log(`  [Pipeline] ✅ Appointment task created successfully`);
+      }
 
       reminderService.scheduleReminders(userId, customerJid, customerName, serviceName, analysis.appointment.proposed_time_iso);
 
       historyStrings.push(`System: Appointment for ${analysis.appointment.proposed_time_iso} for ${serviceName} has been booked! Confirm warmly.`);
     } else if (analysis.appointment && !analysis.appointment.proposed_time_iso) {
+      console.log(`  [Pipeline] ⚠️ Appointment detected but no time extracted`);
       historyStrings.push(`System: Customer wants to book but hasn't specified time. Ask for preferred date and time.`);
+    } else {
+      console.log(`  [Pipeline] No appointment in this message`);
     }
 
     // 9. Update conversation summary
@@ -205,8 +225,14 @@ export class PipelineService {
     const isPhotoRequest = PHOTO_REQUEST_REGEX.test(messageText);
     const isNegotiationRequest = NEGOTIATION_REGEX.test(messageText);
 
+    // Infer product from context ONLY for photo requests, negotiations, and specific follow-ups
+    // Do NOT infer for browse queries ("kaunsi gaadiya hai?") — that would filter to just one car
     let inferredProductName: string | undefined;
-    if (isPhotoRequest || isNegotiationRequest || !analysis.entities?.product_name) {
+    const shouldInferProduct = isPhotoRequest || isNegotiationRequest ||
+      (analysis.intent === 'inventory_inquiry' && !analysis.entities?.product_name) ||
+      (analysis.intent === 'pricing_inquiry' && !analysis.entities?.product_name);
+
+    if (shouldInferProduct) {
       inferredProductName = await this.inferProductFromRecentContext(userId, historyStrings);
       if (inferredProductName) {
         historyStrings.push(`System: Customer has already selected product: ${inferredProductName}. Do not ask which product again unless they change it.`);
@@ -231,31 +257,53 @@ export class PipelineService {
       isNegotiationRequest ||
       Boolean(analysis.entities?.product_name);
 
-    if (isInventoryQuery && analysis.entities) {
-      // INVENTORY PATH — search catalog with extracted entities
-      console.log(`  [Pipeline] → Routing to INVENTORY search`);
+    if (isInventoryQuery) {
+      // Check if this is a general "show me everything" browse vs specific product query
+      const hasSpecificFilters = analysis.entities?.product_name ||
+        analysis.entities?.category || analysis.entities?.brand ||
+        analysis.entities?.price_min || analysis.entities?.price_max ||
+        (analysis.entities?.attributes && Object.keys(analysis.entities.attributes).length > 0);
 
-      const result = await this.catalog.searchWithAlternatives(userId, messageText, {
-        product_name: analysis.entities.product_name || undefined,
-        category: analysis.entities.category || analysis.entities.brand || undefined,
-        price_min: analysis.entities.price_min || undefined,
-        price_max: analysis.entities.price_max || undefined,
-        attributes: analysis.entities.attributes || undefined,
-      });
+      if (!hasSpecificFilters && analysis.intent === 'inventory_browse') {
+        // GENERAL BROWSE — "kaunsi gaadiya hai?", "what do you have?" → list ALL items
+        console.log(`  [Pipeline] → General browse — listing ALL available items`);
 
-      const available = result.exact.filter(i => i.quantity > 0);
-      const sold = result.exact.filter(i => i.quantity <= 0);
+        const allItems = await this.catalog.listItems(userId, {
+          status: 'available',
+          limit: 20,
+          sort: 'price_asc',
+        });
 
-      inventoryContext = {
-        items: available,
-        soldItems: sold.length > 0 ? sold : undefined,
-        alternatives: result.alternatives.length > 0 ? result.alternatives : undefined,
-      };
+        inventoryContext = {
+          items: allItems.items,
+        };
+      } else if (analysis.entities) {
+        // SPECIFIC SEARCH — "Honda City in white under 8 lakhs"
+        console.log(`  [Pipeline] → Specific inventory search with filters`);
 
-      console.log(`  [Pipeline] Inventory results: ${available.length} available, ${sold.length} sold, ${result.alternatives.length} alternatives`);
+        const result = await this.catalog.searchWithAlternatives(userId, messageText, {
+          product_name: analysis.entities.product_name || undefined,
+          category: analysis.entities.category || analysis.entities.brand || undefined,
+          price_min: analysis.entities.price_min || undefined,
+          price_max: analysis.entities.price_max || undefined,
+          attributes: analysis.entities.attributes || undefined,
+        });
+
+        const available = result.exact.filter(i => i.quantity > 0);
+        const sold = result.exact.filter(i => i.quantity <= 0);
+
+        inventoryContext = {
+          items: available,
+          soldItems: sold.length > 0 ? sold : undefined,
+          alternatives: result.alternatives.length > 0 ? result.alternatives : undefined,
+        };
+      }
+
+      const itemCount = inventoryContext?.items?.length || 0;
+      console.log(`  [Pipeline] Inventory results: ${itemCount} items found`);
 
       // If no inventory results, also search knowledge base as fallback
-      if (available.length === 0 && sold.length === 0) {
+      if (itemCount === 0) {
         console.log(`  [Pipeline] → No inventory match, falling back to knowledge base`);
         knowledgeChunks = await this.rag.searchKnowledge(userId, messageText);
       }
@@ -273,7 +321,7 @@ export class PipelineService {
 
     const autoReplyIntents = [
       'greeting', 'general_question', 'pricing_inquiry', 'service_inquiry',
-      'inventory_inquiry', 'inventory_browse',
+      'inventory_inquiry', 'inventory_browse', 'meeting_request', 'location_inquiry',
     ];
 
     const shouldReply =
@@ -283,6 +331,43 @@ export class PipelineService {
       (analysis.confidence >= (user.ai_confidence_threshold || 0.75) ||
         autoReplyIntents.includes(analysis.intent)) &&
       !analysis.escalation_reason;
+
+    // Handle location inquiries — share address + Google Maps link
+    if (analysis.intent === 'location_inquiry') {
+      const address = user.business_address || '';
+      const mapsLink = user.google_maps_link || '';
+      const useHinglish = analysis.language_detected.startsWith('hi') || HINGLISH_HINT_REGEX.test(messageText);
+
+      let locationReply: string;
+      if (address && mapsLink) {
+        locationReply = useHinglish
+          ? `Ji, humara showroom yahan hai:\n${address}\n\nGoogle Maps: ${mapsLink}\n\nAap kab aana chahenge?`
+          : `Our showroom is at:\n${address}\n\nGoogle Maps: ${mapsLink}\n\nWhen would you like to visit?`;
+      } else if (address) {
+        locationReply = useHinglish
+          ? `Ji, humara address hai: ${address}\n\nAap kab aana chahenge?`
+          : `We're located at: ${address}\n\nWhen would you like to visit?`;
+      } else if (mapsLink) {
+        locationReply = useHinglish
+          ? `Ji, ye raha humara location: ${mapsLink}\n\nAap kab aa rahe hain?`
+          : `Here's our location: ${mapsLink}\n\nWhen are you planning to visit?`;
+      } else {
+        locationReply = useHinglish
+          ? 'Ji, main abhi location details check karke bhejta hoon.'
+          : 'Let me get the exact location details and share with you.';
+      }
+
+      const sent = await baileysAdapter.sendMessage(userId, customerJid, locationReply);
+      if (sent) {
+        await this.supabase.from('wb_messages').insert({
+          conversation_id: conversation.id,
+          sender: 'ai',
+          content: locationReply,
+        });
+        autoReplied = true;
+      }
+      return { success: true, autoReplied, analysis };
+    }
 
     if (analysis.intent === 'price_negotiation' || isNegotiationRequest) {
       const product = analysis.entities?.product_name || inferredProductName || inventoryContext?.items?.[0]?.item_name;
@@ -312,8 +397,16 @@ export class PipelineService {
     if (shouldReply) {
       let mediaSent = false;
 
-      // Send product image FIRST if we have a specific match with images
-      if (inventoryContext?.items && inventoryContext.items.length > 0) {
+      // Only send images for SPECIFIC product inquiries (1-2 items) and explicit photo requests
+      // Do NOT send images for: browse/listing, bookings, meetings, greetings, general questions
+      const isSpecificProductQuery = analysis.intent === 'inventory_inquiry' || analysis.intent === 'pricing_inquiry';
+      const hasSpecificProduct = !!(analysis.entities?.product_name || inferredProductName);
+      const shouldSendImages = isPhotoRequest || (isSpecificProductQuery && hasSpecificProduct && !analysis.appointment?.proposed_time_iso);
+
+      // Never send photos for browse/listing queries ("kaunsi gaadiya hai?")
+      // Browse = many items, photos would be spammy
+
+      if (shouldSendImages && inventoryContext?.items && inventoryContext.items.length > 0) {
         const itemsForMedia = isPhotoRequest
           ? inventoryContext.items.slice(0, 1)
           : (inventoryContext.items.length <= 3 ? inventoryContext.items : []);
@@ -347,7 +440,7 @@ export class PipelineService {
         const selectedProduct = analysis.entities?.product_name || inferredProductName || inventoryContext?.items?.[0]?.item_name;
         replyText = this.buildPhotoReply(analysis.language_detected, selectedProduct, mediaSent);
       } else {
-        // Generate reply with both inventory and knowledge context
+        // Generate reply with inventory, knowledge, AND conversation memory
         replyText = await generateReply(
           messageText,
           historyStrings,
@@ -358,7 +451,8 @@ export class PipelineService {
             services: user.services || [],
           },
           analysis.language_detected,
-          inventoryContext
+          inventoryContext,
+          conversationMemory
         );
       }
 
@@ -428,6 +522,96 @@ export class PipelineService {
         summary: analysis.summary_update,
       });
     }
+  }
+
+  /**
+   * Build a compressed conversation memory from the full chat history.
+   * This gives the AI a "summary of what happened so far" so it doesn't repeat questions
+   * or forget what the customer already told us.
+   */
+  private async buildConversationMemory(conversation: any, historyStrings: string[]): Promise<string> {
+    const parts: string[] = [];
+    const now = new Date();
+
+    // 1. Existing conversation summary
+    if (conversation.summary) {
+      parts.push(`CONVERSATION SUMMARY: ${conversation.summary}`);
+    }
+
+    // 2. Fetch appointment status for this conversation
+    const { data: tasks } = await this.supabase
+      .from('wb_tasks')
+      .select('title, due_date, is_completed')
+      .eq('conversation_id', conversation.id)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (tasks && tasks.length > 0) {
+      const appointmentStatus: string[] = [];
+      for (const task of tasks) {
+        if (!task.due_date) continue;
+        const dueDate = new Date(task.due_date);
+        const isPast = dueDate < now;
+        const isToday = dueDate.toDateString() === now.toDateString();
+
+        if (task.is_completed) {
+          appointmentStatus.push(`COMPLETED: "${task.title}" on ${task.due_date}`);
+        } else if (isPast) {
+          appointmentStatus.push(`PAST (already happened): "${task.title}" was on ${task.due_date} — DO NOT offer help "before the appointment", it's already done`);
+        } else if (isToday) {
+          appointmentStatus.push(`TODAY: "${task.title}" is scheduled for today ${task.due_date}`);
+        } else {
+          appointmentStatus.push(`UPCOMING: "${task.title}" on ${task.due_date}`);
+        }
+      }
+      if (appointmentStatus.length > 0) {
+        parts.push(`APPOINTMENT STATUS:\n${appointmentStatus.join('\n')}`);
+      }
+    }
+
+    // 3. Extract key facts from conversation history
+    const customerMessages = historyStrings
+      .filter(h => h.startsWith('customer:'))
+      .map(h => h.replace('customer: ', ''));
+
+    const aiMessages = historyStrings
+      .filter(h => h.startsWith('ai:'))
+      .map(h => h.replace('ai: ', ''));
+
+    // Track what customer has already told us
+    const customerFacts: string[] = [];
+    for (const msg of customerMessages) {
+      const lower = msg.toLowerCase();
+      if (/my name is|i am|main .+ hoon/i.test(msg)) customerFacts.push(`Customer introduced themselves: "${msg}"`);
+      if (/(\d+)\s*(lakh|lac|l|k)\b/i.test(msg) || /budget/i.test(msg)) customerFacts.push(`Customer mentioned budget: "${msg}"`);
+      if (/interested|pasand|like|want|chahiye|dekhna/i.test(lower)) customerFacts.push(`Customer expressed interest: "${msg}"`);
+      if (/location|address|kahan|where|visit/i.test(lower)) customerFacts.push(`Location was already shared`);
+      if (/emi|loan|finance|installment/i.test(lower)) customerFacts.push(`Customer asked about financing/EMI`);
+      if (/test.drive|appointment|book|visit|schedule/i.test(lower)) customerFacts.push(`Customer discussed booking: "${msg}"`);
+      if (/photo|pic|image|dekh/i.test(lower)) customerFacts.push(`Photos were already shared`);
+    }
+
+    // Track what AI has already done (not just asked)
+    const aiActions: string[] = [];
+    for (const msg of aiMessages.slice(-8)) {
+      if (/location|address|maps/i.test(msg)) aiActions.push(`AI already shared: location/address`);
+      if (/photo|pic|image/i.test(msg)) aiActions.push(`AI already shared: product photos`);
+      if (/schedule|book|confirm|appointment/i.test(msg)) aiActions.push(`AI already confirmed: appointment/booking`);
+      if (/\?/.test(msg)) aiActions.push(`AI asked: "${msg.slice(0, 60)}..."`);
+    }
+
+    if (customerFacts.length > 0) {
+      parts.push(`WHAT CUSTOMER ALREADY TOLD US (don't re-ask):\n${[...new Set(customerFacts)].slice(-8).join('\n')}`);
+    }
+
+    if (aiActions.length > 0) {
+      parts.push(`WHAT AI ALREADY DID (don't repeat):\n${[...new Set(aiActions)].slice(-6).join('\n')}`);
+    }
+
+    parts.push(`CURRENT TIME: ${now.toISOString()}`);
+    parts.push(`MESSAGES SO FAR: ${historyStrings.length}`);
+
+    return parts.join('\n\n');
   }
 
   /** Infer last discussed product from recent customer/AI messages in the same conversation. */

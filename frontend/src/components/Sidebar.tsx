@@ -11,7 +11,8 @@ import {
   Settings,
   LogOut,
   Zap,
-  Brain
+  Brain,
+  CalendarDays
 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
@@ -23,6 +24,7 @@ const Sidebar: React.FC = () => {
     { icon: MessageSquare, label: 'Conversations', path: '/conversations' },
     { icon: Users, label: 'Leads', path: '/leads' },
     { icon: CheckSquare, label: 'Tasks', path: '/tasks' },
+    { icon: CalendarDays, label: 'Appointments', path: '/appointments' },
     { icon: Brain, label: 'AI Brain', path: '/ai-brain' },
     { icon: BarChart3, label: 'Analytics', path: '/analytics' },
     { icon: Settings, label: 'Settings', path: '/settings' },

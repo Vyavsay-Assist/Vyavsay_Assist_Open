@@ -75,21 +75,23 @@ export const knowledgeCreate = z.object({
 // ─── User Schemas ────────────────────────────────────
 
 export const userUpdate = z.object({
-  business_name: z.string().max(200).optional(),
-  industry: z.string().max(200).optional(),
-  services: z.array(z.string().max(200)).optional(),
-  auto_reply_enabled: z.boolean().optional(),
-  ai_confidence_threshold: z.number().min(0).max(1).optional(),
-  followup_timer_hours: z.number().int().min(1).max(720).optional(),
+  business_name: z.string().max(200).nullish(),
+  industry: z.string().max(200).nullish(),
+  services: z.array(z.string().max(200)).nullish(),
+  business_address: z.string().max(500).nullish(),
+  google_maps_link: z.string().max(500).nullish(),
+  auto_reply_enabled: z.boolean().nullish(),
+  ai_confidence_threshold: z.number().min(0).max(1).nullish(),
+  followup_timer_hours: z.number().int().min(1).max(720).nullish(),
   inventory_schema: z.object({
     fields: z.array(z.object({
       key: z.string().max(100),
       label: z.string().max(200),
       type: z.enum(['text', 'number', 'dropdown', 'date', 'boolean']),
       required: z.boolean().optional(),
-      options: z.array(z.string().max(200)).optional(),
+      options: z.array(z.string().max(200)).nullish(),
     })),
-  }).optional(),
+  }).nullish(),
 });
 
 // ─── Schema Management ───────────────────────────────
@@ -109,8 +111,8 @@ export const schemaUpdate = z.object({
 // ─── Conversation Schemas ────────────────────────────
 
 export const conversationUpdate = z.object({
-  status: z.string().max(50).optional(),
-  ai_paused: z.boolean().optional(),
+  status: z.string().max(50).nullish(),
+  ai_paused: z.boolean().nullish(),
 });
 
 export const sendMessage = z.object({
@@ -120,17 +122,17 @@ export const sendMessage = z.object({
 // ─── Lead Schemas ────────────────────────────────────
 
 export const leadUpdate = z.object({
-  stage: z.string().max(50).optional(),
-  notes: z.string().max(5000).optional(),
-  score: z.enum(['high', 'medium', 'low']).optional(),
+  stage: z.string().max(50).nullish(),
+  notes: z.string().max(5000).nullish(),
+  score: z.enum(['high', 'medium', 'low']).nullish(),
 });
 
 // ─── Task Schemas ────────────────────────────────────
 
 export const taskUpdate = z.object({
-  is_completed: z.boolean().optional(),
-  title: z.string().max(500).optional(),
-  due_date: z.string().optional(),
+  is_completed: z.boolean().nullish(),
+  title: z.string().max(500).nullish(),
+  due_date: z.string().nullish(),
 });
 
 // ─── File Processing ─────────────────────────────────

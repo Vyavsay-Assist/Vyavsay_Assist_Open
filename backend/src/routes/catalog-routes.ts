@@ -30,17 +30,32 @@ export const catalogRoutes: FastifyPluginAsync = async (server: FastifyInstance)
     return reply.send(stats);
   });
 
-  /** Export inventory as Excel (.xlsx) */
+  /** Export inventory as Excel (.xlsx) — supports ?type=all|available|sold */
   server.get('/export', async (request, reply) => {
     const userId = request.userId;
+    const { type: exportType } = request.query as { type?: string };
 
-    // Fetch all active items
-    const { data: items } = await server.supabase
+    // Fetch items based on export type
+    let query = server.supabase
       .from('wb_catalog_items')
       .select('*')
       .eq('user_id', userId)
       .eq('is_active', true)
       .order('item_name', { ascending: true });
+
+    if (exportType === 'sold') {
+      query = server.supabase
+        .from('wb_catalog_items')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .lte('quantity', 0)
+        .order('updated_at', { ascending: false });
+    } else if (exportType === 'available') {
+      query = query.gt('quantity', 0);
+    }
+
+    const { data: items } = await query;
 
     if (!items || items.length === 0) {
       return reply.status(404).send({ error: 'No items to export' });
@@ -49,17 +64,22 @@ export const catalogRoutes: FastifyPluginAsync = async (server: FastifyInstance)
     // Fetch user's schema for column labels
     const { data: userData } = await server.supabase
       .from('wb_users')
-      .select('inventory_schema')
+      .select('inventory_schema, business_name')
       .eq('id', userId)
       .single();
 
     const schemaFields = userData?.inventory_schema?.fields || [];
+    const businessName = userData?.business_name || 'Inventory';
 
     // Build Excel workbook
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Inventory');
+    workbook.creator = 'Vyavsay AI';
 
-    // Build columns: core fields + dynamic attribute fields
+    // Sheet 1: Inventory
+    const sheetName = exportType === 'sold' ? 'Sold Items' : 'Inventory';
+    const sheet = workbook.addWorksheet(sheetName);
+
+    // Build columns
     const columns: { header: string; key: string; width: number }[] = [
       { header: 'Item Name', key: 'item_name', width: 30 },
       { header: 'Category', key: 'category', width: 20 },
@@ -67,22 +87,20 @@ export const catalogRoutes: FastifyPluginAsync = async (server: FastifyInstance)
       { header: 'Quantity', key: 'quantity', width: 10 },
     ];
 
-    // Add schema-defined attribute columns
     for (const field of schemaFields) {
       columns.push({ header: field.label, key: `attr_${field.key}`, width: 18 });
     }
 
     columns.push({ header: 'Status', key: 'status', width: 12 });
+    columns.push({ header: 'Added On', key: 'created_at', width: 15 });
+    columns.push({ header: 'Last Updated', key: 'updated_at', width: 15 });
+
     sheet.columns = columns;
 
     // Style header row
-    sheet.getRow(1).font = { bold: true };
-    sheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF4F46E5' },
-    };
+    const headerColor = exportType === 'sold' ? 'FFDC2626' : 'FF4F46E5';
     sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headerColor } };
 
     // Add data rows
     for (const item of items) {
@@ -92,20 +110,34 @@ export const catalogRoutes: FastifyPluginAsync = async (server: FastifyInstance)
         price: item.price || '',
         quantity: item.quantity,
         status: item.quantity > 0 ? 'Available' : 'Sold',
+        created_at: item.created_at ? new Date(item.created_at).toLocaleDateString() : '',
+        updated_at: item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '',
       };
 
       for (const field of schemaFields) {
         row[`attr_${field.key}`] = item.attributes?.[field.key] ?? '';
       }
 
-      sheet.addRow(row);
+      const addedRow = sheet.addRow(row);
+
+      // Highlight sold rows in red
+      if (item.quantity <= 0) {
+        addedRow.eachCell((cell) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF2F2' } };
+        });
+      }
     }
 
-    // Generate buffer and send
-    const buffer = await workbook.xlsx.writeBuffer();
+    // Auto-filter
+    sheet.autoFilter = { from: 'A1', to: `${String.fromCharCode(64 + columns.length)}1` };
 
+    const filename = exportType === 'sold'
+      ? `${businessName}_sold_report_${new Date().toISOString().split('T')[0]}.xlsx`
+      : `${businessName}_inventory_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+    const buffer = await workbook.xlsx.writeBuffer();
     reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    reply.header('Content-Disposition', 'attachment; filename=inventory_export.xlsx');
+    reply.header('Content-Disposition', `attachment; filename=${filename}`);
     return reply.send(Buffer.from(buffer as ArrayBuffer));
   });
 

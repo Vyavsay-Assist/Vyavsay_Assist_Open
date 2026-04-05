@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import client from '../api/client';
 import { useNavigate } from 'react-router-dom';
-import { 
-  MessageSquare, 
-  Users, 
-  CheckSquare, 
+import {
+  MessageSquare,
+  Users,
+  CheckSquare,
   ArrowUpRight,
   Clock,
   Zap,
@@ -13,7 +13,9 @@ import {
   QrCode,
   BookOpen,
   Wifi,
-  WifiOff
+  WifiOff,
+  CalendarDays,
+  User,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -22,6 +24,7 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [stats, setStats] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,12 +41,29 @@ const Dashboard: React.FC = () => {
         return;
       }
 
-      const [statsRes, sessionsRes] = await Promise.all([
+      const [statsRes, sessionsRes, tasksRes] = await Promise.all([
         client.get('/analytics').catch(() => ({ data: {} })),
         client.get('/sessions').catch(() => ({ data: { sessions: [] } })),
+        client.get('/tasks').catch(() => ({ data: { tasks: [] } })),
       ]);
       setStats(statsRes.data);
       setSessions(sessionsRes.data.sessions || []);
+
+      // Extract upcoming appointments from tasks — match multiple patterns
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const isAppt = (title: string) => {
+        if (!title) return false;
+        const lower = title.toLowerCase();
+        return lower.includes('appointment') || lower.includes('test drive') ||
+               lower.includes('meeting') || lower.includes('visit') ||
+               lower.includes('booking') || lower.includes('schedule') || title.includes('📅');
+      };
+      const upcomingAppts = (tasksRes.data.tasks || [])
+        .filter((t: any) => isAppt(t.title) && !t.is_completed && t.due_date && new Date(t.due_date) >= now)
+        .sort((a: any, b: any) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+        .slice(0, 5);
+      setAppointments(upcomingAppts);
     } catch (err) {
       console.error('Failed to fetch dashboard data');
     } finally {
@@ -151,6 +171,55 @@ const Dashboard: React.FC = () => {
           </div>
         </motion.div>
       </motion.div>
+
+      {/* Upcoming Appointments */}
+      {appointments.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card border border-border/50 rounded-3xl p-8 shadow-lg"
+        >
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <CalendarDays className="w-6 h-6 text-primary" />
+              <h2 className="text-xl font-bold">Upcoming Appointments</h2>
+            </div>
+            <button onClick={() => navigate('/appointments')} className="text-sm text-primary font-semibold hover:underline">
+              View All
+            </button>
+          </div>
+          <div className="space-y-3">
+            {appointments.map((appt: any) => {
+              const apptDate = new Date(appt.due_date);
+              const isToday = apptDate.toDateString() === new Date().toDateString();
+              const nameMatch = appt.title?.match(/Appointment:\s*(.+?)\s*[—–-]\s*/);
+              const serviceMatch = appt.title?.match(/[—–-]\s*(.+)$/);
+              const customerName = nameMatch?.[1] || 'Customer';
+              const service = serviceMatch?.[1] || 'Appointment';
+
+              return (
+                <div key={appt.id} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
+                  isToday ? 'bg-green-500/5 border-green-500/30' : 'bg-muted/20 border-border/30'
+                }`}>
+                  <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center shrink-0 ${
+                    isToday ? 'bg-green-500/20 text-green-400' : 'bg-muted/50 text-muted-foreground'
+                  }`}>
+                    <span className="text-[9px] font-bold uppercase">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][apptDate.getDay()]}</span>
+                    <span className="text-lg font-bold leading-none">{apptDate.getDate()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{service}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <User className="w-3 h-3" /> {customerName}
+                      {isToday && <span className="ml-2 text-green-400 font-bold">TODAY</span>}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
 
       {/* Bottom Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

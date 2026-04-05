@@ -127,23 +127,52 @@ const Settings: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground ml-1">Services Offered (comma separated)</label>
-              <textarea 
-                value={Array.isArray(profile?.services) ? profile.services.join(', ') : profile?.services || ''} 
+              <textarea
+                value={Array.isArray(profile?.services) ? profile.services.join(', ') : profile?.services || ''}
                 onChange={(e) => setProfile({ ...profile, services: e.target.value.split(',').map((s: string) => s.trim()) })}
                 placeholder="e.g. Solar Installation, Maintenance, Consultation"
                 className="w-full bg-muted/30 border border-border rounded-2xl p-4 h-32 focus:ring-2 focus:ring-primary/50 outline-none transition-all resize-none"
               />
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground ml-1">Business Address</label>
+                <input
+                  type="text"
+                  value={profile?.business_address || ''}
+                  onChange={(e) => setProfile({ ...profile, business_address: e.target.value })}
+                  placeholder="e.g. 123 MG Road, Pune, Maharashtra 411001"
+                  className="w-full bg-muted/30 border border-border rounded-2xl p-4 focus:ring-2 focus:ring-primary/50 outline-none transition-all"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground ml-1">Google Maps Link</label>
+                <input
+                  type="text"
+                  value={profile?.google_maps_link || ''}
+                  onChange={(e) => setProfile({ ...profile, google_maps_link: e.target.value })}
+                  placeholder="e.g. https://maps.google.com/..."
+                  className="w-full bg-muted/30 border border-border rounded-2xl p-4 focus:ring-2 focus:ring-primary/50 outline-none transition-all"
+                />
+              </div>
+            </div>
             <div className="flex justify-end">
-              <button 
+              <button
                 disabled={saving}
                 onClick={async () => {
                   setSaving(true);
                   try {
+                    // Clean up services array — filter out empty strings
+                    const cleanServices = Array.isArray(profile.services)
+                      ? profile.services.filter((s: string) => s && s.trim())
+                      : [];
+
                     await client.patch(`/users/${user?.id}`, {
-                      business_name: profile.business_name,
-                      industry: profile.industry,
-                      services: profile.services
+                      business_name: profile.business_name || null,
+                      industry: profile.industry || null,
+                      services: cleanServices.length > 0 ? cleanServices : null,
+                      business_address: profile.business_address || null,
+                      google_maps_link: profile.google_maps_link || null,
                     });
                     alert('Profile updated! AI will now use these details.');
                   } catch (err) {

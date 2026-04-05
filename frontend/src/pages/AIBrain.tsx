@@ -13,6 +13,8 @@ import {
   Loader2,
   Settings2,
   Upload,
+  Download,
+  FileDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import InventoryTable from '../components/InventoryTable';
@@ -139,6 +141,27 @@ const AIBrain: React.FC = () => {
     fetchInventoryStats();
   };
 
+  const handleDownload = async (type: 'all' | 'sold') => {
+    try {
+      const response = await client.get(`/catalog/export?type=${type}`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = type === 'sold' ? 'sold_report.xlsx' : 'inventory_export.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        alert(type === 'sold' ? 'No sold items to export.' : 'No items to export.');
+      } else {
+        alert('Download failed. Please try again.');
+      }
+    }
+  };
+
   const handleEditItem = (item: any) => {
     setEditingItem(item);
     setShowItemModal(true);
@@ -213,7 +236,7 @@ const AIBrain: React.FC = () => {
           className="space-y-6"
         >
           {/* Action bar */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               onClick={() => { setEditingItem(null); setShowItemModal(true); }}
               className="bg-primary hover:bg-primary/90 text-white font-bold px-5 py-3 rounded-2xl transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
@@ -232,6 +255,35 @@ const AIBrain: React.FC = () => {
             >
               <Settings2 className="w-5 h-5" /> Manage Fields
             </button>
+
+            {/* Download buttons — pushed to right */}
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => handleDownload('all')}
+                className="bg-card border border-border/50 hover:border-blue-500/30 text-foreground font-semibold px-4 py-3 rounded-2xl transition-all flex items-center gap-2 text-sm"
+              >
+                <Download className="w-4 h-4 text-blue-400" /> Download Inventory
+              </button>
+              <button
+                onClick={() => handleDownload('sold')}
+                className="bg-card border border-border/50 hover:border-red-500/30 text-foreground font-semibold px-4 py-3 rounded-2xl transition-all flex items-center gap-2 text-sm"
+              >
+                <FileDown className="w-4 h-4 text-red-400" /> Sold Report
+              </button>
+            </div>
+          </div>
+
+          {/* Info banner about Excel sync */}
+          <div className="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-4 flex items-start gap-3">
+            <Upload className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-blue-300">Excel Sync</p>
+              <p className="text-muted-foreground">
+                Upload your Excel to import inventory. Make changes here on the dashboard.
+                Download anytime to get the updated Excel with all changes.
+                Sold items are tracked with dates in the Sold Report.
+              </p>
+            </div>
           </div>
 
           {/* Schema hint if empty */}
