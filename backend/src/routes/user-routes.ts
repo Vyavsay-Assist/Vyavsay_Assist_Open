@@ -19,10 +19,13 @@ export const userRoutes: FastifyPluginAsync = async (server: FastifyInstance) =>
         .insert({ id: request.userId })
         .select()
         .single();
-      if (createError) return reply.status(500).send({ error: 'Failed to create user profile' });
+      if (createError) {
+        server.log.error({ createError, userId: request.userId }, 'Failed to create user profile');
+        return reply.status(500).send({ error: 'Failed to create user profile' });
+      }
       data = newUser;
     } else if (error) {
-      console.error('User GET error:', error);
+      server.log.error({ error, userId: request.userId }, 'User GET error');
       return reply.status(500).send({ error: 'Failed to fetch user profile', details: error.message });
     }
 
@@ -44,7 +47,7 @@ export const userRoutes: FastifyPluginAsync = async (server: FastifyInstance) =>
       .single();
 
     if (error) {
-      console.error('User PATCH error:', error, 'Updates:', updates);
+      server.log.error({ error, updates, userId: request.userId }, 'User PATCH error');
       return reply.status(500).send({ error: 'Failed to update user profile', details: error.message });
     }
     return reply.send({ user: data });
