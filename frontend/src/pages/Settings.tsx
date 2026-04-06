@@ -30,6 +30,10 @@ const Settings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const updateProfileField = (field: string, value: any) => {
+    setProfile((prev: any) => ({ ...(prev || {}), [field]: value }));
+  };
+
   useEffect(() => {
     if (user) fetchProfile();
   }, [user]);
@@ -51,7 +55,7 @@ const Settings: React.FC = () => {
     try {
       const newVal = !profile.auto_reply_enabled;
       await client.patch(`/users/${user?.id}`, { auto_reply_enabled: newVal });
-      setProfile({ ...profile, auto_reply_enabled: newVal });
+      updateProfileField('auto_reply_enabled', newVal);
     } catch (err) {
       alert('Failed to update settings');
     } finally {
@@ -128,7 +132,7 @@ const Settings: React.FC = () => {
                 label="Business Name"
                 color="honey"
                 value={profile?.business_name || ''}
-                onChange={(e) => setProfile({ ...profile, business_name: e.target.value })}
+                onChange={(e) => updateProfileField('business_name', e.target.value)}
                 placeholder="e.g. VyavsayAssist"
               />
               <div className="flex flex-col gap-1.5">
@@ -137,7 +141,7 @@ const Settings: React.FC = () => {
                 </label>
                 <select
                   value={profile?.industry || 'generic'}
-                  onChange={(e) => setProfile({ ...profile, industry: e.target.value })}
+                  onChange={(e) => updateProfileField('industry', e.target.value)}
                   className="w-full bg-pastel-lavender/40 rounded-input h-[54px] px-4 text-sm text-ink-300 outline-none border-0 transition-all duration-150 focus:ring-2 focus:ring-ink-200/30"
                 >
                   <option value="generic">General Business</option>
@@ -152,7 +156,7 @@ const Settings: React.FC = () => {
               </label>
               <textarea
                 value={Array.isArray(profile?.services) ? profile.services.join(', ') : profile?.services || ''}
-                onChange={(e) => setProfile({ ...profile, services: e.target.value.split(',').map((s: string) => s.trim()) })}
+                onChange={(e) => updateProfileField('services', e.target.value.split(',').map((s: string) => s.trim()))}
                 placeholder="e.g. Solar Installation, Maintenance, Consultation"
                 className="w-full bg-pastel-sage/40 rounded-input p-4 h-32 text-sm text-ink-300 placeholder:text-ink-50 outline-none border-0 transition-all duration-150 focus:ring-2 focus:ring-ink-200/30 resize-none"
               />
@@ -163,14 +167,14 @@ const Settings: React.FC = () => {
                 label="Business Address"
                 color="sky"
                 value={profile?.business_address || ''}
-                onChange={(e) => setProfile({ ...profile, business_address: e.target.value })}
+                onChange={(e) => updateProfileField('business_address', e.target.value)}
                 placeholder="e.g. 123 MG Road, Pune, Maharashtra 411001"
               />
               <Input
                 label="Google Maps Link"
                 color="cream"
                 value={profile?.google_maps_link || ''}
-                onChange={(e) => setProfile({ ...profile, google_maps_link: e.target.value })}
+                onChange={(e) => updateProfileField('google_maps_link', e.target.value)}
                 placeholder="e.g. https://maps.google.com/..."
               />
             </div>
@@ -185,7 +189,7 @@ const Settings: React.FC = () => {
                   setSaving(true);
                   try {
                     // Clean up services array — filter out empty strings
-                    const cleanServices = Array.isArray(profile.services)
+                    const cleanServices = Array.isArray(profile?.services)
                       ? profile.services.filter((s: string) => s && s.trim())
                       : [];
 
