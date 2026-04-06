@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -29,19 +29,24 @@ const Settings: React.FC = () => {
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const hasLocalEditsRef = useRef(false);
 
   const updateProfileField = (field: string, value: any) => {
+    hasLocalEditsRef.current = true;
     setProfile((prev: any) => ({ ...(prev || {}), [field]: value }));
   };
 
   useEffect(() => {
-    if (user) fetchProfile();
-  }, [user]);
+    if (user?.id) fetchProfile();
+  }, [user?.id]);
 
   const fetchProfile = async () => {
     try {
       const res = await client.get(`/users/${user?.id}`);
-      setProfile(res.data.user);
+      // Avoid wiping in-progress edits when auth/session events trigger refetch.
+      if (!hasLocalEditsRef.current) {
+        setProfile(res.data.user);
+      }
     } catch (err) {
       console.error('Failed to fetch profile');
     } finally {
@@ -200,6 +205,7 @@ const Settings: React.FC = () => {
                       business_address: profile.business_address || null,
                       google_maps_link: profile.google_maps_link || null,
                     });
+                    hasLocalEditsRef.current = false;
                     alert('Profile updated! AI will now use these details.');
                   } catch (err) {
                     alert('Failed to save profile');
