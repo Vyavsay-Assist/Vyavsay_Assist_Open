@@ -20,7 +20,7 @@ const fastify = Fastify({
       ? { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } }
       : undefined,
   },
-  bodyLimit: 5 * 1024 * 1024, // 5MB max request body
+  bodyLimit: 15 * 1024 * 1024, // 15MB max request body (for multipart file uploads)
 });
 
 async function main() {
