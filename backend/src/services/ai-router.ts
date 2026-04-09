@@ -8,7 +8,7 @@ const openai = new OpenAI({
   apiKey: config.GITHUB_PAT,
 });
 
-const MODEL = 'gpt-4o';
+const MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const ANALYSIS_TIMEOUT_MS = 20000;
 const REPLY_TIMEOUT_MS = 25000;
 const SUMMARY_TIMEOUT_MS = 12000;
