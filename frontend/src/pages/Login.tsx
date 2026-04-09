@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import VyavsayLogo from '../components/brand/VyavsayLogo';
 
 const Login: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -47,10 +48,13 @@ const Login: React.FC = () => {
       >
         {/* Logo mark */}
         <div className="flex flex-col items-center mb-10">
-          <div className="w-14 h-14 rounded-full bg-pastel-lavender flex items-center justify-center mb-6">
-            <span className="font-display font-bold text-xl text-soft-lavender">V</span>
+          <div className="w-16 h-16 rounded-[24px] bg-white/80 border border-white/70 shadow-[0_18px_50px_rgba(15,23,42,0.08)] flex items-center justify-center mb-6 backdrop-blur-sm">
+            <VyavsayLogo className="w-11 h-11" />
           </div>
-          <h1 className="font-display text-[28px] font-bold text-ink-400 text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-ink-50 mb-2">
+            Vyavsay Assist
+          </p>
+          <h1 className="font-display text-[30px] font-bold text-ink-400 text-center">
             {isLogin ? 'Welcome back.' : 'Create account.'}
           </h1>
           <p className="text-ink-50 text-[15px] mt-1.5 text-center">

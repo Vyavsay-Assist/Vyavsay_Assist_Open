@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   QrCode,
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { cn } from '../../lib/utils';
+import VyavsayLogo from '../brand/VyavsayLogo';
 
 const navItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -28,6 +29,7 @@ const navItems = [
 
 export default function DesktopSidebar() {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
   const initial = displayName.charAt(0).toUpperCase();
@@ -36,12 +38,24 @@ export default function DesktopSidebar() {
   return (
     <aside className="sticky top-0 h-screen w-60 shrink-0 flex flex-col bg-cream-50 border-r border-cream-200">
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 pt-6 pb-4">
-        <div className="w-9 h-9 rounded-full bg-pastel-lavender flex items-center justify-center">
-          <span className="font-display font-bold text-soft-lavender text-sm">V</span>
+      <button
+        type="button"
+        onClick={() => navigate('/dashboard')}
+        className="group mx-3 mt-4 mb-4 flex items-center gap-3 rounded-2xl border border-cream-200 bg-white/80 px-3.5 py-3 text-left shadow-[0_16px_40px_rgba(15,23,42,0.06)] transition-all hover:-translate-y-0.5 hover:border-cream-300 hover:shadow-[0_20px_50px_rgba(15,23,42,0.1)]"
+        aria-label="Go to dashboard"
+      >
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#F6FAF6] ring-1 ring-[#D9E6D7] shadow-inner">
+          <VyavsayLogo className="h-8 w-8" />
         </div>
-        <span className="font-display text-lg font-bold text-ink-400">Vyavsay</span>
-      </div>
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-[15px] font-bold tracking-tight text-ink-400">
+            Vyavsay Assist
+          </div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-ink-50">
+            AI Sales Copilot
+          </div>
+        </div>
+      </button>
 
       {/* Nav items */}
       <nav className="flex-1 flex flex-col gap-0.5 px-3 py-2 overflow-y-auto">
