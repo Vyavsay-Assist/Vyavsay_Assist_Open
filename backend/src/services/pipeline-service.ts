@@ -328,14 +328,19 @@ export class PipelineService {
     // ──────────────────────────────────────────────
 
     let autoReplied = false;
+    const isAutoReplyEnabled = user.auto_reply_enabled !== false;
 
     const shouldReply =
-      user.auto_reply_enabled &&
+      isAutoReplyEnabled &&
       !conversation.ai_paused &&
       analysis.should_auto_reply &&
       (analysis.confidence >= (user.ai_confidence_threshold || domain.limits.confidenceThreshold) ||
         domain.autoReplyIntents.includes(analysis.intent)) &&
       !analysis.escalation_reason;
+
+    console.log(
+      `  [Pipeline] shouldReply=${shouldReply} | autoReply=${isAutoReplyEnabled} | paused=${conversation.ai_paused} | analysisAuto=${analysis.should_auto_reply} | confidence=${analysis.confidence} | threshold=${user.ai_confidence_threshold || domain.limits.confidenceThreshold} | intent=${analysis.intent} | escalation=${analysis.escalation_reason || 'none'}`
+    );
 
     // Handle location inquiries — share address + Google Maps link
     if (analysis.intent === 'location_inquiry') {
@@ -514,7 +519,7 @@ export class PipelineService {
         });
         autoReplied = true;
       }
-    } else if (user.auto_reply_enabled && !analysis.escalation_reason) {
+    } else if (isAutoReplyEnabled && !analysis.escalation_reason) {
       // Fallback acknowledgement
       const fallback = domain.fallbacks.genericAcknowledgement;
       const sent = await baileysAdapter.sendMessage(userId, customerJid, fallback);
