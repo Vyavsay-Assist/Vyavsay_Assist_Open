@@ -11,6 +11,8 @@ const openai = new OpenAI({
 const MODEL = 'gpt-4o';
 const ANALYSIS_TIMEOUT_MS = 20000;
 const REPLY_TIMEOUT_MS = 25000;
+const SUMMARY_TIMEOUT_MS = 12000;
+const FOLLOW_UP_TIMEOUT_MS = 12000;
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timeoutHandle: NodeJS.Timeout | undefined;
@@ -224,16 +226,21 @@ export async function generateReply(
 export async function generateSummary(messages: string[], domain?: BaseDomain): Promise<string> {
   const d = domain || getDomain(null);
   try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{
-        role: 'system',
-        content: `Summarize this business conversation in 1-2 sentences. Focus on: what the customer wants, key decisions, pending actions.\n\nMessages:\n${messages.join('\n')}\n\nSummary:`,
-      }],
-      ...d.llmParams.summary,
-    });
+    const response = await withTimeout(
+      openai.chat.completions.create({
+        model: MODEL,
+        messages: [{
+          role: 'system',
+          content: `Summarize this business conversation in 1-2 sentences. Focus on: what the customer wants, key decisions, pending actions.\n\nMessages:\n${messages.join('\n')}\n\nSummary:`,
+        }],
+        ...d.llmParams.summary,
+      }),
+      SUMMARY_TIMEOUT_MS,
+      'AI summary generation'
+    );
     return response.choices[0].message.content || 'Conversation in progress.';
-  } catch {
+  } catch (err: any) {
+    console.error('❌ AI summary generation failed:', err.message);
     return 'Conversation in progress.';
   }
 }
@@ -258,11 +265,15 @@ export async function generateFollowUp(
   });
 
   try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'system', content: prompt }],
-      ...d.llmParams.followUp,
-    });
+    const response = await withTimeout(
+      openai.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: 'system', content: prompt }],
+        ...d.llmParams.followUp,
+      }),
+      FOLLOW_UP_TIMEOUT_MS,
+      'AI follow-up generation'
+    );
     return response.choices[0].message.content || d.fallbacks.followUpFallback(customerName);
   } catch (err: any) {
     console.error('❌ AI follow-up generation failed:', err.message);
