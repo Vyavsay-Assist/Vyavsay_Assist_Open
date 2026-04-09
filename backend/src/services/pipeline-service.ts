@@ -39,7 +39,7 @@ export class PipelineService {
     customerPhone: string,
     messageText: string
   ): Promise<{ success: boolean; autoReplied: boolean; analysis: any }> {
-
+   try {
     // 1. Fetch or create user
     let { data: user } = await this.supabase
       .from('wb_users')
@@ -125,12 +125,29 @@ export class PipelineService {
       (m: any) => `${m.sender}: ${m.content}`
     );
 
+    // Conversation cap — auto-escalate extremely long conversations to prevent bloat
+    if (historyStrings.length >= 150) {
+      console.warn(`⚠️ [Pipeline] Conversation ${conversation.id} hit 150 message cap — auto-escalating`);
+      const capMsg = 'This conversation has been quite detailed! Let me connect you with our team for more personalized help. They will continue from here.';
+      try {
+        await baileysAdapter.sendMessage(userId, customerJid, capMsg);
+        await this.supabase.from('wb_messages').insert({
+          conversation_id: conversation.id, sender: 'ai', content: capMsg,
+        });
+        await this.supabase.from('wb_conversations').update({ ai_paused: true }).eq('id', conversation.id);
+      } catch (capErr: any) {
+        console.error('[Pipeline] Cap escalation failed:', capErr.message);
+      }
+      return { success: true, autoReplied: true, analysis: null };
+    }
+
     // 4.5 Build conversation memory — a compressed summary of what's been discussed
     // This prevents the AI from asking repetitive questions
     const conversationMemory = await this.buildConversationMemory(conversation, historyStrings);
 
     // 5. Run AI analysis (now includes entity extraction + conversation memory)
-    const analysis = await analyzeMessage(messageText, historyStrings, {
+    const aiMessageText = messageText.slice(0, 1500);
+    const analysis = await analyzeMessage(aiMessageText, historyStrings, {
       business_name: user.business_name || '',
       industry: user.industry || '',
       services: user.services || [],
@@ -213,13 +230,11 @@ export class PipelineService {
       console.log(`  [Pipeline] No appointment in this message`);
     }
 
-    // 9. Update conversation summary
+    // 9. Update conversation summary (fire-and-forget — non-blocking)
     if (historyStrings.length >= 3) {
-      const summary = await generateSummary(historyStrings, domain);
-      await this.supabase
-        .from('wb_conversations')
-        .update({ summary, language: analysis.language_detected })
-        .eq('id', conversation.id);
+      generateSummary(historyStrings, domain)
+        .then(summary => this.supabase.from('wb_conversations').update({ summary, language: analysis.language_detected }).eq('id', conversation.id))
+        .catch(err => console.error('[Pipeline] Summary update failed:', err.message));
     }
 
     // ──────────────────────────────────────────────
@@ -492,7 +507,7 @@ export class PipelineService {
       } else {
         // Generate reply with inventory, knowledge, AND conversation memory
         replyText = await generateReply(
-          messageText,
+          aiMessageText,
           historyStrings,
           knowledgeChunks,
           {
@@ -534,6 +549,15 @@ export class PipelineService {
     }
 
     return { success: true, autoReplied, analysis };
+   } catch (err) {
+    console.error('[Pipeline] CRITICAL pipeline crash:', err);
+    try {
+      await baileysAdapter.sendMessage(userId, customerJid, 'Thanks for your message! Our team will get back to you shortly.');
+    } catch (_) {
+      // Socket may also be down — silently ignore
+    }
+    return { success: false, autoReplied: false, analysis: null };
+   }
   }
 
   /** Upsert lead — create new or upgrade score if higher, advance funnel stage */
@@ -680,7 +704,7 @@ export class PipelineService {
 
     // 1. Existing conversation summary
     if (conversation.summary) {
-      parts.push(`CONVERSATION SUMMARY: ${conversation.summary}`);
+      parts.push(`CONVERSATION SUMMARY: ${conversation.summary.slice(0, 200)}`);
     }
 
     // 2. Fetch appointment status for this conversation
@@ -746,11 +770,11 @@ export class PipelineService {
     }
 
     if (customerFacts.length > 0) {
-      parts.push(`WHAT CUSTOMER ALREADY TOLD US (don't re-ask):\n${[...new Set(customerFacts)].slice(-8).join('\n')}`);
+      parts.push(`WHAT CUSTOMER ALREADY TOLD US (don't re-ask):\n${[...new Set(customerFacts)].slice(-5).map(f => f.slice(0, 80)).join('\n')}`);
     }
 
     if (aiActions.length > 0) {
-      parts.push(`WHAT AI ALREADY DID (don't repeat):\n${[...new Set(aiActions)].slice(-6).join('\n')}`);
+      parts.push(`WHAT AI ALREADY DID (don't repeat):\n${[...new Set(aiActions)].slice(-4).map(a => a.slice(0, 60)).join('\n')}`);
     }
 
     // 4. Track products discussed — shown, liked, rejected
@@ -789,6 +813,7 @@ export class PipelineService {
 
     if (productsMentioned.size > 0) {
       const productList = [...productsMentioned.entries()]
+        .slice(0, 5)
         .map(([name, status]) => `- ${name}: ${status.toUpperCase()}`)
         .join('\n');
       parts.push(`PRODUCTS DISCUSSED:\n${productList}\nDo NOT suggest REJECTED products again.`);
@@ -809,7 +834,7 @@ export class PipelineService {
     if (/low\s*km|less\s*driven|kam\s*chali/i.test(fullText)) preferences.push('Wants low mileage');
 
     if (preferences.length > 0) {
-      parts.push(`CUSTOMER PREFERENCES:\n${[...new Set(preferences)].join(', ')}`);
+      parts.push(`CUSTOMER PREFERENCES:\n${[...new Set(preferences)].slice(0, 5).join(', ')}`);
     }
 
     // 6. Funnel stage and buying signal context
@@ -826,7 +851,8 @@ export class PipelineService {
     parts.push(`CURRENT TIME: ${now.toISOString()}`);
     parts.push(`MESSAGES SO FAR: ${historyStrings.length}`);
 
-    return parts.join('\n\n');
+    const result = parts.join('\n\n');
+    return result.length > 2000 ? result.slice(0, 2000) + '\n[Memory truncated]' : result;
   }
 
   /** Infer last discussed product from recent customer/AI messages in the same conversation. */

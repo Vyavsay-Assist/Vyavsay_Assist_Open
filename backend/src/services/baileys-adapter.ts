@@ -1,5 +1,6 @@
 import { proto } from '@whiskeysockets/baileys';
 import { rateLimiter } from '../utils/rate-limiter.js';
+import { inboundRateLimiter } from '../utils/inbound-rate-limiter.js';
 import { sessionManager } from './session-manager.js';
 import { pipelineService } from './pipeline-service.js';
 
@@ -41,6 +42,12 @@ export class BaileysAdapter {
 
       // Skip status broadcasts
       if (parsed.jid === 'status@broadcast') return;
+
+      // Inbound rate limiting — prevent message flood abuse
+      if (!inboundRateLimiter.shouldProcess(parsed.jid)) {
+        console.warn(`⚠️ [RateLimit] Throttled ${parsed.jid} — too many messages`);
+        return;
+      }
 
       console.log(`\n📩 [${userId.slice(0, 8)}] ${parsed.customerName}: "${parsed.text}"`);
 

@@ -141,21 +141,29 @@ export async function generateReply(
 ): Promise<string> {
   const d = domain || getDomain(null);
 
-  // Build inventory context string if we have product data
+  // HACKATHON: Capped to 5 items + abbreviated attrs to prevent context bloat
   let inventoryInfo = '';
   if (inventoryContext) {
     const { items, soldItems, alternatives } = inventoryContext;
 
     if (items && items.length > 0) {
+      const limitedItems = items.slice(0, 5);
+      const SKIP_KEYS = /(image|img|photo|pic|url|link|description)/i;
+      const CORE_KEYS = ['item_name', 'category', 'price', 'quantity'];
+
       inventoryInfo += '\nAVAILABLE PRODUCTS FROM INVENTORY (REAL DATA — use this!):\n';
-      items.forEach((item, i) => {
+      limitedItems.forEach((item, i) => {
         const price = item.price ? d.formatInventoryPrice(item.price) : 'Price on request';
         const attrs = item.attributes
           ? Object.entries(item.attributes)
               .filter(([k, v]) => {
                 if (v === null || v === undefined) return false;
-                if (typeof v === 'string' && /^https?:\/\//i.test(v)) return false;
-                if (/(image|img|photo|pic)/i.test(k)) return false;
+                if (SKIP_KEYS.test(k)) return false;
+                if (CORE_KEYS.includes(k)) return true;
+                // Only include non-core attrs if short
+                const strVal = String(v);
+                if (strVal.length >= 50) return false;
+                if (/^https?:\/\//i.test(strVal)) return false;
                 return true;
               })
               .map(([k, v]) => `${k}: ${v}`)
@@ -166,20 +174,25 @@ export async function generateReply(
     }
 
     if (soldItems && soldItems.length > 0) {
+      const limitedSold = soldItems.slice(0, 3);
       inventoryInfo += '\nSOLD OUT / UNAVAILABLE:\n';
-      soldItems.forEach((item) => {
+      limitedSold.forEach((item) => {
         inventoryInfo += `- ${item.item_name} — SOLD OUT\n`;
       });
     }
 
     if (alternatives && alternatives.length > 0) {
+      const limitedAlts = alternatives.slice(0, 3);
       inventoryInfo += '\nSIMILAR ALTERNATIVES AVAILABLE:\n';
-      alternatives.forEach((item, i) => {
+      limitedAlts.forEach((item, i) => {
         const price = item.price ? d.formatInventoryPrice(item.price) : 'Price on request';
-        inventoryInfo += `${i + 1}. ${item.item_name} — ₹${price}, ${item.quantity} in stock\n`;
+        inventoryInfo += `${i + 1}. ${item.item_name} — ₹${price}\n`;
       });
     }
   }
+
+  // HACKATHON: Limit knowledge chunks to 3, each max 400 chars
+  const limitedChunks = (knowledgeContext || []).slice(0, 3).map(c => c.length > 400 ? c.slice(0, 400) + '...' : c);
 
   const prompt = d.replyPrompt.buildSystemPrompt({
     businessName: businessProfile.business_name || 'our business',
@@ -187,7 +200,7 @@ export async function generateReply(
     services: businessProfile.services?.join(', ') || 'Various',
     conversationMemory: conversationMemory || '',
     inventoryInfo,
-    knowledgeContext: knowledgeContext.length > 0 ? 'KNOWLEDGE BASE:\n' + knowledgeContext.join('\n---\n') : '',
+    knowledgeContext: limitedChunks.length > 0 ? 'KNOWLEDGE BASE:\n' + limitedChunks.join('\n---\n') : '',
     language,
   });
 

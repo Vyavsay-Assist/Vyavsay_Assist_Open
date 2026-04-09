@@ -14,12 +14,12 @@ export class CronService {
   init(): void {
     // 1. Daily Sales Report at 9:00 PM (21:00)
     cron.schedule('0 21 * * *', () => {
-      this.sendDailyReports();
+      this.sendDailyReports().catch(err => console.error('[Cron] Daily reports failed:', err.message));
     });
 
     // 2. Stale Lead Follow-up check every 6 hours
     cron.schedule('0 */6 * * *', () => {
-      this.processFollowUps();
+      this.processFollowUps().catch(err => console.error('[Cron] Follow-ups failed:', err.message));
     });
 
     console.log('📅 Cron Service Initialized (Daily Reports & Follow-ups)');

@@ -46,9 +46,13 @@ export class ReminderService {
     if (twoHoursBefore > now) {
       const delay = twoHoursBefore - now;
       const timer = setTimeout(async () => {
-        const msg = `Hey ${customerName}, just a reminder that your ${service} appointment is in 2 hours. See you then! In case of any changes, just text us.`;
-        await baileysAdapter.sendMessage(userId, jid, msg);
-        console.log(`⏰ [Reminder] 2h reminder sent to ${customerName}`);
+        try {
+          const msg = `Hey ${customerName}, just a reminder that your ${service} appointment is in 2 hours. See you then! In case of any changes, just text us.`;
+          await baileysAdapter.sendMessage(userId, jid, msg);
+          console.log(`⏰ [Reminder] 2h reminder sent to ${customerName}`);
+        } catch (err: any) {
+          console.error(`[Reminder] Failed to send reminder:`, err.message);
+        }
       }, delay);
       timers.push(timer);
       console.log(`⏰ [Reminder] 2h reminder scheduled for ${customerName} (in ${Math.round(delay / 60000)}min)`);
@@ -59,9 +63,13 @@ export class ReminderService {
     if (oneHourBefore > now) {
       const delay = oneHourBefore - now;
       const timer = setTimeout(async () => {
-        const msg = `Hi ${customerName}, your ${service} appointment is in 1 hour. Looking forward to seeing you!`;
-        await baileysAdapter.sendMessage(userId, jid, msg);
-        console.log(`⏰ [Reminder] 1h reminder sent to ${customerName}`);
+        try {
+          const msg = `Hi ${customerName}, your ${service} appointment is in 1 hour. Looking forward to seeing you!`;
+          await baileysAdapter.sendMessage(userId, jid, msg);
+          console.log(`⏰ [Reminder] 1h reminder sent to ${customerName}`);
+        } catch (err: any) {
+          console.error(`[Reminder] Failed to send reminder:`, err.message);
+        }
       }, delay);
       timers.push(timer);
       console.log(`⏰ [Reminder] 1h reminder scheduled for ${customerName} (in ${Math.round(delay / 60000)}min)`);

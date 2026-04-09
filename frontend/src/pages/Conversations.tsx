@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -37,16 +37,26 @@ const Conversations: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState('');
   const [showChat, setShowChat] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (user) fetchConversations();
   }, [user]);
 
   useEffect(() => {
-    if (selectedConvo) {
+    if (!selectedConvo) return;
+    fetchMessages(selectedConvo.id);
+
+    const interval = setInterval(() => {
       fetchMessages(selectedConvo.id);
-    }
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [selectedConvo]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const fetchConversations = async () => {
     try {
@@ -314,6 +324,7 @@ const Conversations: React.FC = () => {
                   </div>
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Compose Bar */}
