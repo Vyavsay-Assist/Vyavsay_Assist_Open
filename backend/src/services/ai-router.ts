@@ -9,6 +9,23 @@ const openai = new OpenAI({
 });
 
 const MODEL = 'gpt-4o';
+const ANALYSIS_TIMEOUT_MS = 20000;
+const REPLY_TIMEOUT_MS = 25000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
 
 /** Structured analysis result from AI */
 export interface AnalysisResult {
@@ -68,12 +85,16 @@ export async function analyzeMessage(
   });
 
   try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'system', content: prompt }],
-      response_format: { type: 'json_object' },
-      ...d.llmParams.analysis,
-    });
+    const response = await withTimeout(
+      openai.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: 'system', content: prompt }],
+        response_format: { type: 'json_object' },
+        ...d.llmParams.analysis,
+      }),
+      ANALYSIS_TIMEOUT_MS,
+      'AI analysis'
+    );
 
     const text = response.choices[0].message.content || '{}';
     const result = JSON.parse(text);
@@ -183,11 +204,15 @@ export async function generateReply(
   mappedMessages.push({ role: 'user', content: customerMessage });
 
   try {
-    const response = await openai.chat.completions.create({
-      model: MODEL,
-      messages: mappedMessages as any,
-      ...d.llmParams.reply,
-    });
+    const response = await withTimeout(
+      openai.chat.completions.create({
+        model: MODEL,
+        messages: mappedMessages as any,
+        ...d.llmParams.reply,
+      }),
+      REPLY_TIMEOUT_MS,
+      'AI reply generation'
+    );
     return response.choices[0].message.content || d.fallbacks.aiFailure;
   } catch (err: any) {
     console.error('❌ AI reply generation failed:', err.message);
