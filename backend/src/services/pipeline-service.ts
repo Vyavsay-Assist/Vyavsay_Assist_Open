@@ -519,8 +519,8 @@ export class PipelineService {
         });
         autoReplied = true;
       }
-    } else if (isAutoReplyEnabled && !analysis.escalation_reason) {
-      // Fallback acknowledgement
+    } else if (!conversation.ai_paused && !analysis.escalation_reason) {
+      // Fallback acknowledgement to avoid silent chats when AI gating blocks a full reply.
       const fallback = domain.fallbacks.genericAcknowledgement;
       const sent = await baileysAdapter.sendMessage(userId, customerJid, fallback);
       if (sent) {
