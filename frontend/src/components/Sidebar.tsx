@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -17,6 +17,7 @@ import {
 
 const Sidebar: React.FC = () => {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -63,7 +64,11 @@ const Sidebar: React.FC = () => {
 
       {/* User & Auth */}
       <div className="w-full px-4 space-y-4 mt-auto pt-8 border-t border-border/50">
-        <div className="flex items-center gap-4 p-2 rounded-xl bg-muted/30 border border-border/50 overflow-hidden">
+        <button
+          onClick={() => navigate('/settings')}
+          className="w-full flex items-center gap-4 p-2 rounded-xl bg-muted/30 border border-border/50 overflow-hidden text-left hover:bg-muted/50 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+          aria-label="Open Settings"
+        >
           <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-blue-400 flex items-center justify-center text-white font-bold shrink-0 shadow-inner">
             {user?.email?.[0].toUpperCase() || 'U'}
           </div>
@@ -73,7 +78,7 @@ const Sidebar: React.FC = () => {
               <span className="w-1.5 h-1.5 bg-green-500 rounded-full" /> Online
             </p>
           </div>
-        </div>
+        </button>
         
         <button 
           onClick={() => signOut()}

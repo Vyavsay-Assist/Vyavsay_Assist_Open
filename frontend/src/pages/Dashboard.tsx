@@ -108,11 +108,15 @@ const Dashboard: React.FC = () => {
             Hi, {firstName}
           </h1>
         </div>
-        <div className="w-11 h-11 rounded-full bg-pastel-peach flex items-center justify-center shrink-0">
+        <button
+          onClick={() => navigate('/settings')}
+          className="w-11 h-11 rounded-full bg-pastel-peach flex items-center justify-center shrink-0 card-press cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-peach/40"
+          aria-label="Open Settings"
+        >
           <span className="font-display font-bold text-soft-peach text-[16px]">
             {firstName.charAt(0).toUpperCase()}
           </span>
-        </div>
+        </button>
       </div>
 
       {/* ── WhatsApp Status Inline ── */}
@@ -130,33 +134,53 @@ const Dashboard: React.FC = () => {
         animate="show"
         className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 lg:gap-4"
       >
-        <motion.div variants={item} className="bg-pastel-lavender rounded-[20px] p-4 card-press">
+        <motion.button
+          variants={item}
+          onClick={() => navigate('/conversations')}
+          className="bg-pastel-lavender rounded-[20px] p-4 card-press text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-lavender/40"
+          aria-label="Open Active Chats"
+        >
           <p className="font-display text-[28px] font-bold text-soft-lavender leading-none">
             {stats?.totalConversations || 0}
           </p>
           <p className="text-[12px] text-soft-lavender/70 mt-1">Active Chats</p>
-        </motion.div>
+        </motion.button>
 
-        <motion.div variants={item} className="bg-pastel-sage rounded-[20px] p-4 card-press">
+        <motion.button
+          variants={item}
+          onClick={() => navigate('/leads')}
+          className="bg-pastel-sage rounded-[20px] p-4 card-press text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-sage/40"
+          aria-label="Open Total Leads"
+        >
           <p className="font-display text-[28px] font-bold text-soft-sage leading-none">
             {stats?.totalLeads || 0}
           </p>
           <p className="text-[12px] text-soft-sage/70 mt-1">Total Leads</p>
-        </motion.div>
+        </motion.button>
 
-        <motion.div variants={item} className="bg-pastel-peach rounded-[20px] p-4 card-press">
+        <motion.button
+          variants={item}
+          onClick={() => navigate('/analytics')}
+          className="bg-pastel-peach rounded-[20px] p-4 card-press text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-peach/40"
+          aria-label="Open Analytics"
+        >
           <p className="font-display text-[28px] font-bold text-soft-peach leading-none">
             {stats?.aiMessagesCount || 0}
           </p>
           <p className="text-[12px] text-soft-peach/70 mt-1">AI Replies</p>
-        </motion.div>
+        </motion.button>
 
-        <motion.div variants={item} className="bg-pastel-sky rounded-[20px] p-4 card-press">
+        <motion.button
+          variants={item}
+          onClick={() => navigate('/tasks')}
+          className="bg-pastel-sky rounded-[20px] p-4 card-press text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-sky/40"
+          aria-label="Open Tasks"
+        >
           <p className="font-display text-[28px] font-bold text-soft-sky leading-none">
             {stats?.totalTasks || 0}
           </p>
           <p className="text-[12px] text-soft-sky/70 mt-1">Tasks</p>
-        </motion.div>
+        </motion.button>
       </motion.div>
 
       {/* ── Quick Actions ── */}
@@ -211,9 +235,11 @@ const Dashboard: React.FC = () => {
               const timeStr = apptDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
               return (
-                <div
+                <button
                   key={appt.id}
-                  className="flex items-center gap-3 rounded-2xl p-3 hover:bg-cream-100 transition-colors"
+                  onClick={() => navigate('/appointments')}
+                  className="w-full flex items-center gap-3 rounded-2xl p-3 hover:bg-cream-100 transition-colors text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-sky/40"
+                  aria-label="Open Appointments"
                 >
                   {/* Date avatar */}
                   <div className="w-10 h-10 rounded-full bg-pastel-sky flex flex-col items-center justify-center shrink-0">
@@ -236,7 +262,7 @@ const Dashboard: React.FC = () => {
 
                   {/* Time */}
                   <span className="text-[11px] text-ink-50 shrink-0">{timeStr}</span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -262,9 +288,11 @@ const Dashboard: React.FC = () => {
         ) : (
           <div className="space-y-1">
             {sessions.map((session, i) => (
-              <div
+              <button
                 key={i}
-                className="flex items-center justify-between rounded-2xl p-3 hover:bg-cream-100 transition-colors"
+                onClick={() => navigate('/qr-scanner')}
+                className="w-full flex items-center justify-between rounded-2xl p-3 hover:bg-cream-100 transition-colors text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-lavender/40"
+                aria-label="Open Connect WhatsApp"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-pastel-lavender flex items-center justify-center">
@@ -282,7 +310,7 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
                 <div className={`w-2.5 h-2.5 rounded-full ${session.status === 'connected' ? 'bg-success' : 'bg-cream-200'}`} />
-              </div>
+              </button>
             ))}
           </div>
         )}
