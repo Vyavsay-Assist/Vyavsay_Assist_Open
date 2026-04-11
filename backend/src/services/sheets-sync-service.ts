@@ -1,241 +1,176 @@
-import { google, sheets_v4 } from 'googleapis';
 import { JWT } from 'google-auth-library';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config/environment.js';
 
-// ─── Column headers for the Google Sheet ────────────────────
 const HEADERS = [
-  'Item Name',
-  'Category',
-  'Price',
-  'Quantity',
-  'Brand',
-  'Fuel Type',
-  'Transmission',
-  'Color',
-  'Year',
-  'Ownership',
-  'Kilometers',
-  'Status',
+  'Item Name', 'Category', 'Price', 'Quantity', 'Brand',
+  'Fuel Type', 'Transmission', 'Color', 'Year', 'Ownership',
+  'Kilometers', 'Status',
 ];
 
-// ─── Service class ──────────────────────────────────────────
+const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 export class SheetsSyncService {
-  // ── Auth helpers ────────────────────────────────────────────
 
-  /** Create a JWT auth client using the service account credentials. */
-  getAuthClient(): JWT {
+  private async getAccessToken(): Promise<string> {
     if (!config.GOOGLE_SA_EMAIL || !config.GOOGLE_SA_KEY) {
-      throw new Error('Google Sheets credentials not configured (GOOGLE_SA_EMAIL / GOOGLE_SA_KEY)');
+      throw new Error('Google Sheets credentials not configured');
     }
-
-    return new JWT({
+    const auth = new JWT({
       email: config.GOOGLE_SA_EMAIL,
       key: config.GOOGLE_SA_KEY,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
+    const token = await auth.authorize();
+    return token.access_token as string;
   }
 
-  /** Return an authorised Google Sheets v4 client. */
-  getSheetsClient(): sheets_v4.Sheets {
-    const auth = this.getAuthClient();
-    return google.sheets({ version: 'v4', auth });
+  private async sheetsGet(range: string): Promise<string[][]> {
+    const token = await this.getAccessToken();
+    const url = `${SHEETS_API}/${config.GOOGLE_SHEET_ID}/values/${encodeURIComponent(range)}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Sheets API GET failed: ${res.status} ${await res.text()}`);
+    const data = await res.json() as any;
+    return data.values || [];
   }
 
-  // ── Export: DB → Sheet ──────────────────────────────────────
+  private async sheetsUpdate(range: string, values: string[][]): Promise<void> {
+    const token = await this.getAccessToken();
+    const url = `${SHEETS_API}/${config.GOOGLE_SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    });
+    if (!res.ok) throw new Error(`Sheets API PUT failed: ${res.status} ${await res.text()}`);
+  }
 
-  /**
-   * Export all active catalog items for a user to the configured Google Sheet.
-   * Clears existing content and writes fresh data.
-   * @returns Number of data rows written (excluding header).
-   */
+  private async sheetsClear(range: string): Promise<void> {
+    const token = await this.getAccessToken();
+    const url = `${SHEETS_API}/${config.GOOGLE_SHEET_ID}/values/${encodeURIComponent(range)}:clear`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Sheets API CLEAR failed: ${res.status} ${await res.text()}`);
+  }
+
   async exportToSheet(supabase: SupabaseClient, userId: string): Promise<number> {
-    const sheets = this.getSheetsClient();
-    const sheetName = config.GOOGLE_SHEET_NAME;
-    const spreadsheetId = config.GOOGLE_SHEET_ID;
+    const sheetName = config.GOOGLE_SHEET_NAME || 'Sheet1';
 
-    // Fetch active catalog items
     const { data: items, error } = await supabase
       .from('wb_catalog_items')
-      .select('item_name, category, price, quantity, attributes, is_active')
+      .select('*')
       .eq('user_id', userId)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .order('created_at', { ascending: true });
 
-    if (error) throw new Error(`Supabase fetch failed: ${error.message}`);
+    if (error) throw new Error(`DB fetch failed: ${error.message}`);
+    if (!items || items.length === 0) throw new Error('No inventory items to export');
 
-    const rows: (string | number)[][] = [HEADERS];
-
-    for (const item of items ?? []) {
-      const attrs = (item.attributes ?? {}) as Record<string, any>;
+    const rows: string[][] = [HEADERS];
+    for (const item of items) {
+      const attrs = item.attributes || {};
       rows.push([
-        item.item_name ?? '',
-        item.category ?? '',
-        item.price ?? '',
-        item.quantity ?? 0,
-        attrs.brand ?? '',
-        attrs.fuel_type ?? '',
-        attrs.transmission ?? '',
-        attrs.color ?? '',
-        attrs.year ?? '',
-        attrs.ownership ?? '',
-        attrs.km_driven ?? '',
-        'active',
+        item.item_name || '',
+        item.category || '',
+        String(item.price || ''),
+        String(item.quantity ?? 1),
+        attrs.brand || attrs.make || '',
+        attrs.fuel_type || attrs['fuel type'] || '',
+        attrs.transmission || '',
+        attrs.color || '',
+        attrs.year || '',
+        attrs.ownership || '',
+        attrs.km_driven || attrs.kilometers_driven || '',
+        item.quantity > 0 ? 'Available' : 'Sold',
       ]);
     }
 
-    // Clear existing content
-    await sheets.spreadsheets.values.clear({
-      spreadsheetId,
-      range: sheetName,
-    });
+    await this.sheetsClear(`${sheetName}!A1:Z1000`);
+    await this.sheetsUpdate(`${sheetName}!A1`, rows);
 
-    // Write all rows (header + data)
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${sheetName}!A1`,
-      valueInputOption: 'RAW',
-      requestBody: { values: rows },
-    });
-
-    const dataRowCount = rows.length - 1;
-    console.log(`[sheets-sync] Exported ${dataRowCount} items to Google Sheet`);
-    return dataRowCount;
+    console.log(`[Sheets] Exported ${items.length} items to Google Sheet`);
+    return items.length;
   }
 
-  // ── Import: Sheet → DB ─────────────────────────────────────
+  async importFromSheet(supabase: SupabaseClient, userId: string): Promise<{ added: number; updated: number }> {
+    const sheetName = config.GOOGLE_SHEET_NAME || 'Sheet1';
+    const values = await this.sheetsGet(`${sheetName}!A1:Z1000`);
 
-  /**
-   * Import rows from the Google Sheet into the database.
-   * Existing items (matched by item_name) are updated; new items are inserted.
-   * @returns Counts of added and updated rows.
-   */
-  async importFromSheet(
-    supabase: SupabaseClient,
-    userId: string,
-  ): Promise<{ added: number; updated: number }> {
-    const sheets = this.getSheetsClient();
-    const sheetName = config.GOOGLE_SHEET_NAME;
-    const spreadsheetId = config.GOOGLE_SHEET_ID;
-
-    // Read all values
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: sheetName,
-    });
-
-    const allRows = res.data.values;
-    if (!allRows || allRows.length < 2) {
-      console.log('[sheets-sync] No data rows found in sheet');
+    if (!values || values.length < 2) {
       return { added: 0, updated: 0 };
     }
 
-    // Parse header row to build column index
-    const headerRow = allRows[0].map((h: string) =>
-      h.trim().toLowerCase().replace(/\s+/g, '_'),
-    );
-    const col = (name: string): number => headerRow.indexOf(name);
-
-    const dataRows = allRows.slice(1);
+    const headers = values[0].map(h => h.trim().toLowerCase());
+    const rows = values.slice(1);
 
     let added = 0;
     let updated = 0;
 
-    for (const row of dataRows) {
-      const itemName = (row[col('item_name')] ?? '').toString().trim();
-      if (!itemName) continue; // skip blank rows
+    for (const row of rows) {
+      const obj: Record<string, string> = {};
+      headers.forEach((h, i) => { obj[h] = (row[i] || '').trim(); });
 
-      const category = (row[col('category')] ?? '').toString().trim() || null;
-      const price = parseFloat(row[col('price')]) || null;
-      const quantity = parseInt(row[col('quantity')], 10) || 0;
+      const itemName = obj['item name'] || obj['item_name'] || obj['name'] || '';
+      if (!itemName) continue;
 
-      const attributes: Record<string, any> = {};
-      const attrFields = ['brand', 'fuel_type', 'transmission', 'color', 'year', 'ownership'];
-      for (const field of attrFields) {
-        const idx = col(field);
-        if (idx >= 0 && row[idx] != null && row[idx] !== '') {
-          attributes[field] = row[idx].toString().trim();
-        }
-      }
-      // Kilometers column maps to km_driven attribute
-      const kmIdx = col('kilometers');
-      if (kmIdx >= 0 && row[kmIdx] != null && row[kmIdx] !== '') {
-        attributes.km_driven = row[kmIdx].toString().trim();
-      }
+      const price = parseFloat((obj['price'] || '0').replace(/[₹,]/g, ''));
+      const quantity = parseInt(obj['quantity'] || '1') || 1;
+      const category = obj['category'] || '';
 
-      // Check if item already exists
+      const attributes: Record<string, string> = {};
+      if (obj['brand']) attributes.brand = obj['brand'];
+      if (obj['fuel type'] || obj['fuel_type']) attributes.fuel_type = obj['fuel type'] || obj['fuel_type'];
+      if (obj['transmission']) attributes.transmission = obj['transmission'];
+      if (obj['color']) attributes.color = obj['color'];
+      if (obj['year']) attributes.year = obj['year'];
+      if (obj['ownership']) attributes.ownership = obj['ownership'];
+      if (obj['kilometers'] || obj['km_driven']) attributes.km_driven = obj['kilometers'] || obj['km_driven'];
+
+      // Check if item exists
       const { data: existing } = await supabase
         .from('wb_catalog_items')
         .select('id')
         .eq('user_id', userId)
         .ilike('item_name', itemName)
+        .eq('is_active', true)
         .limit(1)
         .single();
 
-      const payload = {
-        item_name: itemName,
-        category,
-        price,
-        quantity,
-        attributes,
-        is_active: true,
-        user_id: userId,
-      };
-
-      if (existing?.id) {
-        // Update existing item
-        const { error } = await supabase
+      if (existing) {
+        await supabase
           .from('wb_catalog_items')
-          .update({
-            category: payload.category,
-            price: payload.price,
-            quantity: payload.quantity,
-            attributes: payload.attributes,
-            is_active: payload.is_active,
-          })
+          .update({ category, price: price || null, quantity, attributes })
           .eq('id', existing.id);
-
-        if (error) {
-          console.error(`[sheets-sync] Failed to update "${itemName}": ${error.message}`);
-        } else {
-          updated++;
-        }
+        updated++;
       } else {
-        // Insert new item
-        const { error } = await supabase.from('wb_catalog_items').insert(payload);
-
-        if (error) {
-          console.error(`[sheets-sync] Failed to insert "${itemName}": ${error.message}`);
-        } else {
-          added++;
-        }
+        await supabase
+          .from('wb_catalog_items')
+          .insert({
+            user_id: userId,
+            item_name: itemName,
+            category,
+            price: price || null,
+            quantity,
+            attributes,
+            is_active: true,
+          });
+        added++;
       }
     }
 
-    console.log(`[sheets-sync] Import complete — added: ${added}, updated: ${updated}`);
+    console.log(`[Sheets] Import complete: ${added} added, ${updated} updated`);
     return { added, updated };
   }
 
-  // ── Bidirectional sync ─────────────────────────────────────
-
-  /**
-   * Run a full bidirectional sync:
-   *  1. Import from sheet (sheet wins for existing rows)
-   *  2. Export to sheet (ensures sheet has all items, including dashboard-added ones)
-   */
-  async syncBidirectional(
-    supabase: SupabaseClient,
-    userId: string,
-  ): Promise<{ imported: { added: number; updated: number }; exported: number }> {
-    console.log('[sheets-sync] Starting bidirectional sync...');
-
-    // Step 1 — Sheet → DB
-    const imported = await this.importFromSheet(supabase, userId);
-
-    // Step 2 — DB → Sheet (now includes everything)
-    const exported = await this.exportToSheet(supabase, userId);
-
-    console.log('[sheets-sync] Bidirectional sync complete');
-    return { imported, exported };
+  async syncBidirectional(supabase: SupabaseClient, userId: string) {
+    const importResult = await this.importFromSheet(supabase, userId);
+    const exportCount = await this.exportToSheet(supabase, userId);
+    return {
+      message: `Sync complete! Imported: ${importResult.added} new, ${importResult.updated} updated. Exported ${exportCount} items to Sheet.`,
+      ...importResult,
+      exported: exportCount,
+    };
   }
 }
