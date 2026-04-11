@@ -10,7 +10,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src/ ./src/
 COPY database/ ./database/
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
 # Production stage
 FROM node:20-slim
