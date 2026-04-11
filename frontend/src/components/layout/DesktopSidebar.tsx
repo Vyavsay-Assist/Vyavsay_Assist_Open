@@ -11,6 +11,7 @@ import {
   Settings,
   LogOut,
   Crown,
+  Phone,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { cn } from '../../lib/utils';
@@ -24,6 +25,7 @@ const navItems = [
   { icon: CheckSquare, label: 'Tasks', path: '/tasks' },
   { icon: CalendarDays, label: 'Appointments', path: '/appointments' },
   { icon: Brain, label: 'AI Brain', path: '/ai-brain' },
+  { icon: Phone, label: 'Voice Calls', path: '/voice-calls' },
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ] as const;
