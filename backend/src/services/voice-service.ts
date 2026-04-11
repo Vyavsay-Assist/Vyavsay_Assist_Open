@@ -378,11 +378,74 @@ Never guess inventory details. Always use search_inventory to check.`;
               content: systemPrompt,
             },
           ],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'search_inventory',
+                description: 'Search product inventory by query, budget, or category. ALWAYS use this before answering about products.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    query: { type: 'string', description: 'Product search query (e.g. "Fortuner", "SUV under 10 lakh")' },
+                    max_budget: { type: 'number', description: 'Maximum budget in rupees' },
+                    category: { type: 'string', description: 'Product category (e.g. SUV, Sedan, Hatchback)' },
+                  },
+                },
+              },
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'book_appointment',
+                description: 'Book an appointment or test drive for the customer',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    customer_name: { type: 'string', description: 'Customer name' },
+                    customer_phone: { type: 'string', description: 'Customer phone number' },
+                    service: { type: 'string', description: 'Service type (e.g. Test Drive, Visit, Consultation)' },
+                    date: { type: 'string', description: 'Preferred date' },
+                    time: { type: 'string', description: 'Preferred time' },
+                  },
+                  required: ['customer_name', 'service'],
+                },
+              },
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'share_location',
+                description: 'Share business location/address with customer via WhatsApp',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    customer_phone: { type: 'string', description: 'Customer phone number to send location to' },
+                  },
+                },
+              },
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'escalate_to_human',
+                description: 'Transfer call to human agent when customer is upset or you cannot help',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    reason: { type: 'string', description: 'Reason for escalation' },
+                  },
+                },
+              },
+            },
+          ],
         },
         voice: {
           provider: 'openai',
           voiceId: 'alloy',
         },
+        serverUrl: 'https://vyavsayassist.app/api/vapi/webhook',
+        serverUrlSecret: 'choose_a_long_random_secret',
       },
     };
   }
