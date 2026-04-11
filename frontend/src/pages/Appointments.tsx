@@ -43,9 +43,13 @@ const TIME_SLOTS = [
 ];
 
 const extractInfo = (title: string): { customerName: string; service: string } => {
-  // "📅 Appointment: John — Test Drive"
+  // "📅 Appointment: John — Test Drive at 3:00 PM"
   const apptMatch = title.match(/(?:Appointment|Booking|Meeting)[:\s]*(.+?)\s*[—–\-]\s*(.+)/i);
-  if (apptMatch) return { customerName: apptMatch[1].trim(), service: apptMatch[2].trim() };
+  if (apptMatch) {
+    // Strip "at HH:MM AM/PM" from service name
+    const service = apptMatch[2].trim().replace(/\s+at\s+\d{1,2}:\d{2}\s*[AP]M$/i, '').trim();
+    return { customerName: apptMatch[1].trim(), service };
+  }
 
   // "Test Drive for John"
   const forMatch = title.match(/(.+?)\s+(?:for|with)\s+(.+)/i);
@@ -361,20 +365,25 @@ const Appointments: React.FC = () => {
                       ? new Date(a.appointment_time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
                       : extractedTime;
                     return (
-                      <div key={a.id} className={`flex items-center gap-3 p-3 rounded-2xl transition-all ${
-                        a.is_completed ? 'opacity-50' :
-                        isActiveToday ? 'bg-pastel-sage/30' : 'hover:bg-cream-100'
+                      <div key={a.id} className={`flex items-center gap-3 p-4 rounded-2xl transition-all border ${
+                        a.is_completed ? 'opacity-50 border-cream-200' :
+                        isActiveToday ? 'bg-pastel-sage/20 border-pastel-sage/40' : 'bg-cream-50 border-cream-200 hover:bg-cream-100'
                       }`}>
-                        <Car className="w-5 h-5 text-ink-100 shrink-0" />
+                        <div className="w-10 h-10 rounded-full bg-pastel-sky/30 flex items-center justify-center shrink-0">
+                          <Car className="w-5 h-5 text-soft-sky" />
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-[13px] font-semibold text-ink-300 truncate ${a.is_completed ? 'line-through' : ''}`}>{a.service}</p>
-                          <p className="text-[11px] text-ink-50 flex items-center gap-1">
+                          <p className={`text-[14px] font-semibold text-ink-400 ${a.is_completed ? 'line-through' : ''}`}>{a.service}</p>
+                          <p className="text-[12px] text-ink-100 flex items-center gap-1 mt-0.5">
                             <User className="w-3 h-3" /> {a.customerName}
                           </p>
                           {displayTime && (
-                            <p className="text-[12px] text-soft-lavender font-semibold flex items-center gap-1 mt-0.5">
-                              <Clock className="w-3 h-3" /> {displayTime}
+                            <p className="text-[13px] text-soft-sage font-bold flex items-center gap-1 mt-1">
+                              <Clock className="w-3.5 h-3.5" /> {displayTime}
                             </p>
+                          )}
+                          {!displayTime && a.due_date && (
+                            <p className="text-[11px] text-ink-50 mt-0.5">Date: {new Date(a.due_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                           )}
                         </div>
                         <div className="flex gap-1">
