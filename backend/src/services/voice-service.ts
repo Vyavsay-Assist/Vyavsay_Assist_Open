@@ -15,7 +15,8 @@ export class VoiceService {
   // ── Main tool call router ──────────────────────────────────────
 
   async handleToolCalls(message: any): Promise<any[]> {
-    const toolCalls: any[] = message?.message?.toolCallList ?? [];
+    // VAPI sends toolCallList at message level (webhook route already unwraps body.message)
+    const toolCalls: any[] = message?.toolCallList ?? message?.message?.toolCallList ?? [];
     const results: any[] = [];
 
     for (const toolCall of toolCalls) {
@@ -56,7 +57,7 @@ export class VoiceService {
       const latencyMs = Date.now() - start;
 
       // Log action asynchronously (don't block the response)
-      const vapiCallId = message?.message?.call?.id;
+      const vapiCallId = message?.call?.id ?? message?.message?.call?.id;
       if (vapiCallId) {
         this.logAction(vapiCallId, name, args, result, success, latencyMs).catch(e =>
           console.error('[Voice] Failed to log action:', e)
@@ -226,8 +227,8 @@ export class VoiceService {
   // ── Call lifecycle: handleStatusUpdate ──────────────────────────
 
   async handleStatusUpdate(message: any): Promise<void> {
-    const call = message?.message?.call;
-    const status = message?.message?.status;
+    const call = message?.call ?? message?.message?.call;
+    const status = message?.status ?? message?.message?.status;
     if (!call?.id) return;
 
     const userId = await this.getUserIdFromCall(message);
@@ -266,8 +267,8 @@ export class VoiceService {
   // ── Call lifecycle: handleEndOfCallReport ───────────────────────
 
   async handleEndOfCallReport(message: any): Promise<void> {
-    const artifact = message?.message?.artifact;
-    const call = message?.message?.call;
+    const artifact = message?.artifact ?? message?.message?.artifact;
+    const call = message?.call ?? message?.message?.call;
     if (!call?.id || !artifact) return;
 
     try {
@@ -454,7 +455,7 @@ Never guess inventory details. Always use search_inventory to check.`;
 
   private async getUserIdFromCall(message: any): Promise<string | null> {
     // Try to extract from call metadata first
-    const metadata = message?.message?.call?.assistantOverrides?.metadata;
+    const metadata = message?.call?.assistantOverrides?.metadata ?? message?.message?.call?.assistantOverrides?.metadata;
     if (metadata?.userId) {
       return metadata.userId;
     }
