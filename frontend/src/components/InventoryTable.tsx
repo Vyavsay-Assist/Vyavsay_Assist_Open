@@ -76,8 +76,8 @@ const InventoryTable: React.FC<Props> = ({ schema, onEdit, onRefresh }) => {
     e.stopPropagation();
     try {
       await client.patch(`/catalog/${id}/sold`);
+      await onRefresh();
       fetchItems();
-      onRefresh();
     } catch (err) {
       console.error('Failed to mark as sold');
     }
@@ -87,8 +87,8 @@ const InventoryTable: React.FC<Props> = ({ schema, onEdit, onRefresh }) => {
     e.stopPropagation();
     try {
       await client.delete(`/catalog/${id}`);
+      await onRefresh();
       fetchItems();
-      onRefresh();
     } catch (err) {
       console.error('Failed to delete item');
     }

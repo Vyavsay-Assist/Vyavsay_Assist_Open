@@ -115,6 +115,13 @@ export class SheetsSyncService {
       const itemName = obj['item name'] || obj['item_name'] || obj['name'] || '';
       if (!itemName) continue;
 
+      // Skip rows that look auto-generated or placeholder
+      const nameLower = itemName.toLowerCase();
+      if (/^(item|example|test|sample|row)\s*\d*$/i.test(itemName) ||
+          nameLower === 'n/a' || nameLower === 'na' || nameLower === '-' || nameLower === 'none') {
+        continue;
+      }
+
       const price = parseFloat((obj['price'] || '0').replace(/[₹,]/g, ''));
       const quantity = parseInt(obj['quantity'] || '1') || 1;
       const category = obj['category'] || '';
@@ -128,17 +135,20 @@ export class SheetsSyncService {
       if (obj['ownership']) attributes.ownership = obj['ownership'];
       if (obj['kilometers'] || obj['km_driven']) attributes.km_driven = obj['kilometers'] || obj['km_driven'];
 
-      // Check if item exists
+      // Check if item exists (include inactive items to avoid re-adding deleted ones)
       const { data: existing } = await supabase
         .from('wb_catalog_items')
-        .select('id')
+        .select('id, is_active')
         .eq('user_id', userId)
         .ilike('item_name', itemName)
-        .eq('is_active', true)
         .limit(1)
         .single();
 
       if (existing) {
+        if (!existing.is_active) {
+          // Item was deleted from dashboard — skip it, don't re-add
+          continue;
+        }
         await supabase
           .from('wb_catalog_items')
           .update({ category, price: price || null, quantity, attributes })
@@ -165,10 +175,12 @@ export class SheetsSyncService {
   }
 
   async syncBidirectional(supabase: SupabaseClient, userId: string) {
-    const importResult = await this.importFromSheet(supabase, userId);
+    // 1. Export DB → Sheet first (DB is source of truth; clears stale/deleted items)
     const exportCount = await this.exportToSheet(supabase, userId);
+    // 2. Then import new items from Sheet (only truly new items survive)
+    const importResult = await this.importFromSheet(supabase, userId);
     return {
-      message: `Sync complete! Imported: ${importResult.added} new, ${importResult.updated} updated. Exported ${exportCount} items to Sheet.`,
+      message: `Sync complete! Exported ${exportCount} items to Sheet. Imported: ${importResult.added} new, ${importResult.updated} updated.`,
       ...importResult,
       exported: exportCount,
     };
