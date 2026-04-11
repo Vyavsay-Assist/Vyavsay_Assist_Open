@@ -432,10 +432,18 @@ export class PipelineService {
       const itemCount = inventoryContext?.items?.length || 0;
       console.log(`  [Pipeline] Inventory results: ${itemCount} items found`);
 
-      // If no inventory results, also search knowledge base as fallback
+      // If no inventory results, search knowledge AND fetch some available items for context
       if (itemCount === 0) {
-        console.log(`  [Pipeline] → No inventory match, falling back to knowledge base`);
+        console.log(`  [Pipeline] → No inventory match, falling back to knowledge base + listing available`);
         knowledgeChunks = await this.rag.searchKnowledge(userId, messageText);
+
+        // Give the AI some available items so it can suggest alternatives instead of saying "I can only help with products"
+        const availableItems = await this.catalog.listItems(userId, { status: 'available', limit: 5, sort: 'price_asc' });
+        if (availableItems.items.length > 0) {
+          inventoryContext = { items: availableItems.items };
+          const productName = analysis.entities?.product_name || 'that product';
+          historyStrings.push(`System: ${productName} is NOT in our inventory. Show the customer what IS available as alternatives. Be honest that we don't have their requested item.`);
+        }
       }
     } else {
       // KNOWLEDGE PATH — general question, search text knowledge base
