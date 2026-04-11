@@ -1,15 +1,18 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { CatalogService } from './catalog-service.js';
 import { RagService } from './rag-service.js';
+import { AppointmentService } from './appointment-service.js';
 import { baileysAdapter } from './baileys-adapter.js';
 
 export class VoiceService {
   private catalog: CatalogService;
   private rag: RagService;
+  private appointments: AppointmentService;
 
   constructor(private supabase: SupabaseClient) {
     this.rag = new RagService(supabase);
     this.catalog = new CatalogService(supabase, this.rag);
+    this.appointments = new AppointmentService(supabase);
   }
 
   // ── Main tool call router ──────────────────────────────────────
@@ -138,6 +141,28 @@ export class VoiceService {
     const title = `\u{1F4C5} Voice Booking: ${customer_name} \u2014 ${service}`;
     const dueDate = date || null;
 
+    // If both date and time are provided, check availability via AppointmentService
+    if (date && time) {
+      const proposedTimeIso = new Date(`${date}T${time}`).toISOString();
+
+      const slotResult = await this.appointments.bookSlot(userId, {
+        customerName: customer_name,
+        service,
+        dateTimeIso: proposedTimeIso,
+      });
+
+      if (!slotResult.success) {
+        const altTimes = slotResult.alternatives?.join(', ') || 'later today';
+        return `Sorry, that time slot is already booked. I have openings at ${altTimes}. Which one works for you?`;
+      }
+
+      // bookSlot already inserted the task, so skip the insert below
+      const dateStr = ` on ${date}`;
+      const timeStr = ` at ${time}`;
+      return `Done! I have booked your appointment for ${service}${dateStr}${timeStr}. ${customer_name}, our team will confirm with you shortly. Is there anything else I can help with?`;
+    }
+
+    // Date-only or no date: just insert the task without time checking
     const { error } = await this.supabase.from('wb_tasks').insert({
       user_id: userId,
       title,

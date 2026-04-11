@@ -33,6 +33,14 @@ interface Appointment {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+const TIME_SLOTS = [
+  '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
+  '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM',
+  '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM',
+  '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM',
+  '06:00 PM', '06:30 PM',
+];
+
 const extractInfo = (title: string): { customerName: string; service: string } => {
   // "📅 Appointment: John — Test Drive"
   const apptMatch = title.match(/(?:Appointment|Booking|Meeting)[:\s]*(.+?)\s*[—–\-]\s*(.+)/i);
@@ -103,7 +111,15 @@ const Appointments: React.FC = () => {
     if (!formName.trim() || !formDate) return;
     setSaving(true);
     try {
-      const title = `📅 Appointment: ${formName.trim()} — ${formService}`;
+      // Convert 24h time to 12h AM/PM format for the title
+      let timeLabel = '';
+      if (formTime) {
+        const [hh, mm] = formTime.split(':').map(Number);
+        const ampm = hh >= 12 ? 'PM' : 'AM';
+        const h12 = hh % 12 || 12;
+        timeLabel = ` at ${String(h12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ampm}`;
+      }
+      const title = `📅 Appointment: ${formName.trim()} — ${formService}${timeLabel}`;
       await client.post('/tasks', { title, due_date: formDate, is_completed: false });
       setFormName(''); setFormService('Test Drive'); setFormDate(''); setFormTime('');
       setShowAddModal(false);
@@ -136,6 +152,19 @@ const Appointments: React.FC = () => {
 
   const selectedDayAppts = selectedDay ? getApptsForDate(selectedDay) : [];
   const selectedDateStr = selectedDay ? `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}` : '';
+
+  const handleSlotClick = (slot: string) => {
+    // Convert "02:00 PM" to 24h "14:00" for the time input
+    const [time, meridiem] = slot.split(' ');
+    let [h, m] = time.split(':').map(Number);
+    if (meridiem === 'PM' && h !== 12) h += 12;
+    if (meridiem === 'AM' && h === 12) h = 0;
+    const time24 = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+    setFormDate(selectedDateStr);
+    setFormTime(time24);
+    setShowAddModal(true);
+  };
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center h-full gap-3">
@@ -273,6 +302,29 @@ const Appointments: React.FC = () => {
                   ({selectedDayAppts.length} appointment{selectedDayAppts.length !== 1 ? 's' : ''})
                 </span>
               </h3>
+              {/* Time Slot Grid */}
+              <div className="grid grid-cols-3 gap-1.5 mb-4">
+                {TIME_SLOTS.map(slot => {
+                  const isBooked = selectedDayAppts.some(a => {
+                    const titleTime = a.title.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
+                    return titleTime && titleTime[1].toLowerCase() === slot.toLowerCase();
+                  });
+                  return (
+                    <button
+                      key={slot}
+                      className={`text-[11px] py-2 rounded-xl font-semibold transition-all ${
+                        isBooked
+                          ? 'bg-pastel-sage/30 text-soft-sage cursor-default'
+                          : 'bg-cream-200/50 text-ink-100 hover:bg-pastel-lavender/40 cursor-pointer'
+                      }`}
+                      onClick={() => !isBooked && handleSlotClick(slot)}
+                    >
+                      {slot} {isBooked ? '●' : ''}
+                    </button>
+                  );
+                })}
+              </div>
+
               {selectedDayAppts.length === 0 ? (
                 <div className="text-center py-8">
                   <CalendarDays className="w-10 h-10 mx-auto mb-2 text-ink-50/30" />

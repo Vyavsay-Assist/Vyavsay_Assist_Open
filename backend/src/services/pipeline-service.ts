@@ -4,6 +4,7 @@ import { RagService } from './rag-service.js';
 import { CatalogService } from './catalog-service.js';
 import { baileysAdapter } from './baileys-adapter.js';
 import { reminderService } from './reminder-service.js';
+import { AppointmentService } from './appointment-service.js';
 import { createClient } from '@supabase/supabase-js';
 import { config } from '../config/environment.js';
 import { getDomain } from '../domains/domain-router.js';
@@ -26,10 +27,12 @@ const URL_REGEX = /^https?:\/\//i;
 export class PipelineService {
   private rag: RagService;
   private catalog: CatalogService;
+  private appointments: AppointmentService;
 
   constructor(private supabase: SupabaseClient) {
     this.rag = new RagService(supabase);
     this.catalog = new CatalogService(supabase, this.rag);
+    this.appointments = new AppointmentService(supabase);
   }
 
   getRagService(): RagService {
@@ -309,25 +312,43 @@ export class PipelineService {
       const dueDate = analysis.appointment.proposed_time_iso.split('T')[0];
       const taskTitle = `📅 Appointment: ${customerName} — ${serviceName}`;
 
-      console.log(`  [Pipeline] ✅ Creating appointment task: "${taskTitle}" on ${dueDate}`);
+      console.log(`  [Pipeline] Checking slot availability for ${analysis.appointment.proposed_time_iso}...`);
 
-      const { error: apptError } = await this.supabase.from('wb_tasks').insert({
-        user_id: userId,
-        conversation_id: conversation.id,
-        title: taskTitle,
-        due_date: dueDate,
-        is_completed: false,
+      const slotResult = await this.appointments.bookSlot(userId, {
+        customerName,
+        service: serviceName,
+        dateTimeIso: analysis.appointment.proposed_time_iso,
+        conversationId: conversation.id,
       });
 
-      if (apptError) {
-        console.error(`  [Pipeline] ❌ Failed to create appointment task:`, apptError);
+      if (!slotResult.success) {
+        // Slot not available — inject alternatives into conversation context
+        const altTimes = slotResult.alternatives?.join(', ') || 'no alternatives found';
+        console.log(`  [Pipeline] ❌ Slot not available. Alternatives: ${altTimes}`);
+        historyStrings.push(`System: The requested time slot is not available. Available times on that day: ${altTimes}. Please suggest these to the customer.`);
       } else {
-        console.log(`  [Pipeline] ✅ Appointment task created successfully`);
+        // Slot available — create the appointment task
+        console.log(`  [Pipeline] ✅ Slot available. Creating appointment task: "${taskTitle}" on ${dueDate}`);
+
+        const { error: apptError } = await this.supabase.from('wb_tasks').insert({
+          user_id: userId,
+          conversation_id: conversation.id,
+          title: taskTitle,
+          due_date: dueDate,
+          appointment_time: analysis.appointment.proposed_time_iso,
+          is_completed: false,
+        });
+
+        if (apptError) {
+          console.error(`  [Pipeline] ❌ Failed to create appointment task:`, apptError);
+        } else {
+          console.log(`  [Pipeline] ✅ Appointment task created successfully`);
+        }
+
+        reminderService.scheduleReminders(userId, customerJid, customerName, serviceName, analysis.appointment.proposed_time_iso);
+
+        historyStrings.push(`System: Appointment for ${analysis.appointment.proposed_time_iso} for ${serviceName} has been booked! Confirm warmly.`);
       }
-
-      reminderService.scheduleReminders(userId, customerJid, customerName, serviceName, analysis.appointment.proposed_time_iso);
-
-      historyStrings.push(`System: Appointment for ${analysis.appointment.proposed_time_iso} for ${serviceName} has been booked! Confirm warmly.`);
     } else if (analysis.appointment && !analysis.appointment.proposed_time_iso) {
       console.log(`  [Pipeline] ⚠️ Appointment detected but no time extracted`);
       historyStrings.push(`System: Customer wants to book but hasn't specified time. Ask for preferred date and time.`);
