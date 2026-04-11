@@ -54,6 +54,9 @@ async function main() {
   const { fileRoutes } = await import('./routes/file-routes.js');
   await fastify.register(fileRoutes, { prefix: '/api/files' });
 
+  const { sheetsRoutes } = await import('./routes/sheets-routes.js');
+  await fastify.register(sheetsRoutes, { prefix: '/api/sheets' });
+
   const { ownerRoutes } = await import('./routes/owner-routes.js');
   await fastify.register(ownerRoutes, { prefix: '/api/owner' });
 

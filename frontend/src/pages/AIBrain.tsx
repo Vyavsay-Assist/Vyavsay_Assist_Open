@@ -13,6 +13,7 @@ import {
   Upload,
   Download,
   FileDown,
+  RefreshCw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import InventoryTable from '../components/InventoryTable';
@@ -52,6 +53,10 @@ const AIBrain: React.FC = () => {
   const [newContent, setNewContent] = useState('');
   const [addingKnowledge, setAddingKnowledge] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
+
+  // Google Sheets sync state
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
 
   // Refresh key to trigger InventoryTable reload
   const [refreshKey, setRefreshKey] = useState(0);
@@ -177,6 +182,22 @@ const AIBrain: React.FC = () => {
     }
   };
 
+  const handleSheetSync = async (action: 'sync' | 'export-to-sheet' | 'import-from-sheet') => {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const { data } = await client.post(`/sheets/${action}`);
+      setSyncMsg(data.message || `Sync complete! Added: ${data.added || 0}, Updated: ${data.updated || 0}`);
+      // Refresh inventory list
+      setRefreshKey(prev => prev + 1);
+      fetchInventoryStats();
+    } catch (err: any) {
+      setSyncMsg(err.response?.data?.error || 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleEditItem = (item: any) => {
     setEditingItem(item);
     setShowItemModal(true);
@@ -283,6 +304,43 @@ const AIBrain: React.FC = () => {
               <FileDown className="w-4 h-4 mr-1.5" /> Sold
             </Button>
           </div>
+
+          {/* Google Sheets Sync */}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Button
+              variant="soft"
+              softColor="sage"
+              size="sm"
+              loading={syncing}
+              onClick={() => handleSheetSync('sync')}
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              Sync with Google Sheets
+            </Button>
+            <Button
+              variant="soft"
+              softColor="sky"
+              size="sm"
+              loading={syncing}
+              onClick={() => handleSheetSync('export-to-sheet')}
+            >
+              Push to Sheet
+            </Button>
+            <Button
+              variant="soft"
+              softColor="honey"
+              size="sm"
+              loading={syncing}
+              onClick={() => handleSheetSync('import-from-sheet')}
+            >
+              Pull from Sheet
+            </Button>
+          </div>
+          {syncMsg && (
+            <p className={`text-xs mt-2 ${syncMsg.includes('fail') ? 'text-red-500' : 'text-soft-sage'}`}>
+              {syncMsg}
+            </p>
+          )}
 
           {/* Info banner about Excel sync */}
           <div className="bg-pastel-sky/30 rounded-[18px] p-4 flex items-start gap-3">

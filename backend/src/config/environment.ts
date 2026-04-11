@@ -30,6 +30,12 @@ export const config = {
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
 
+  // Google Sheets sync (service account)
+  GOOGLE_SA_EMAIL: process.env.GOOGLE_SA_EMAIL || '',
+  GOOGLE_SA_KEY: (process.env.GOOGLE_SA_KEY || '').replace(/\\n/g, '\n'),
+  GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID || '',
+  GOOGLE_SHEET_NAME: process.env.GOOGLE_SHEET_NAME || 'Sheet1',
+
   // Owner/Admin access allowlist
   OWNER_EMAILS: (process.env.OWNER_EMAILS || '')
     .split(',')
