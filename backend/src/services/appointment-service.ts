@@ -45,9 +45,35 @@ const DEFAULT_WORKING_HOURS: WorkingHours = {
 
 const DEFAULT_SLOT_DURATION = 30;
 
-/** Convert a Date to IST and return a new Date representing that IST moment */
+/**
+ * Convert a Date to IST by returning a Date whose **UTC** fields
+ * (getUTCDay, getUTCHours, etc.) equal the IST wall-clock values.
+ *
+ * The old implementation `new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))`
+ * is broken: the string is re-parsed in the *system* timezone, so on a UTC
+ * server the resulting getDay()/getHours() reflect UTC, not IST -- causing
+ * wrong day-of-week detection (e.g. Saturday misidentified as Sunday when the
+ * IST time crosses midnight relative to UTC).
+ */
 function toIST(date: Date): Date {
-  return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const parts: Record<string, string> = {};
+  for (const p of fmt.formatToParts(date)) {
+    parts[p.type] = p.value;
+  }
+  return new Date(Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour) % 24,   // hour12:false may return "24" for midnight
+    Number(parts.minute),
+    Number(parts.second),
+  ));
 }
 
 /** Format "14:30" -> "2:30 PM" */
@@ -62,6 +88,20 @@ function formatTimeDisplay(time24: string): string {
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
+}
+
+/**
+ * If a datetime string has no timezone offset (e.g. "2026-04-12T15:00:00"),
+ * append "+05:30" so it is interpreted as IST instead of the server's local TZ.
+ * Strings that already contain a timezone indicator (Z, +, or - after the time)
+ * are returned unchanged.
+ */
+function ensureISTOffset(dateTimeIso: string): string {
+  // Already has timezone info (ends with Z, +HH:MM, or -HH:MM)
+  if (/[Zz]$/.test(dateTimeIso) || /[+-]\d{2}:\d{2}$/.test(dateTimeIso)) {
+    return dateTimeIso;
+  }
+  return `${dateTimeIso}+05:30`;
 }
 
 /** Convert total minutes to "HH:MM" */
@@ -138,7 +178,7 @@ export class AppointmentService {
     // Determine day of week in IST
     const dateObj = new Date(`${date}T12:00:00+05:30`);
     const istDate = toIST(dateObj);
-    const dayName = DAY_NAMES[istDate.getDay()];
+    const dayName = DAY_NAMES[istDate.getUTCDay()];
     const dayConfig = config.hours[dayName];
 
     if (!dayConfig || !dayConfig.enabled) {
@@ -176,13 +216,18 @@ export class AppointmentService {
    * @param dateTimeIso - ISO datetime string
    */
   async isSlotAvailable(userId: string, dateTimeIso: string): Promise<SlotAvailability> {
+    // Ensure the datetime is interpreted in IST if no timezone is specified.
+    // Without this, `new Date('2026-04-11T21:00:00')` on a UTC server would be
+    // interpreted as UTC, which is Apr 12 02:30 IST -- shifting the day.
+    dateTimeIso = ensureISTOffset(dateTimeIso);
+
     const requestedDate = new Date(dateTimeIso);
     if (isNaN(requestedDate.getTime())) {
       return { available: false, reason: 'Invalid date/time format' };
     }
 
     const istDate = toIST(requestedDate);
-    const dayName = DAY_NAMES[istDate.getDay()];
+    const dayName = DAY_NAMES[istDate.getUTCDay()];
 
     const config = await this.getWorkingHours(userId);
     const dayConfig = config.hours[dayName];
@@ -193,7 +238,7 @@ export class AppointmentService {
     }
 
     // Check if within working hours
-    const requestedMinutes = istDate.getHours() * 60 + istDate.getMinutes();
+    const requestedMinutes = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
     const startMinutes = timeToMinutes(dayConfig.start);
     const endMinutes = timeToMinutes(dayConfig.end);
 
@@ -233,20 +278,24 @@ export class AppointmentService {
       conversationId?: string;
     }
   ): Promise<BookingResult> {
-    const { customerName, service, dateTimeIso, conversationId } = params;
+    const { customerName, service, conversationId } = params;
+    const dateTimeIso = ensureISTOffset(params.dateTimeIso);
 
     // Check availability
     const availability = await this.isSlotAvailable(userId, dateTimeIso);
 
     if (!availability.available) {
-      const dateStr = dateTimeIso.split('T')[0];
       const alternatives = await this.suggestAlternatives(userId, dateTimeIso);
       console.log(`[Appointment] Booking failed for ${customerName}: ${availability.reason}`);
+
+      const message = alternatives.length > 0
+        ? `${availability.reason}. Next available: ${alternatives.join(', ')}`
+        : `${availability.reason}. No available slots found in the next few days.`;
 
       return {
         success: false,
         alternatives,
-        message: `${availability.reason}. Available alternatives: ${alternatives.join(', ')}`,
+        message,
       };
     }
 
@@ -278,7 +327,7 @@ export class AppointmentService {
 
     const istDate = toIST(new Date(dateTimeIso));
     const timeDisplay = formatTimeDisplay(
-      `${istDate.getHours().toString().padStart(2, '0')}:${istDate.getMinutes().toString().padStart(2, '0')}`
+      `${istDate.getUTCHours().toString().padStart(2, '0')}:${istDate.getUTCMinutes().toString().padStart(2, '0')}`
     );
 
     console.log(`[Appointment] Booked: ${customerName} for ${service} on ${dateStr} at ${timeDisplay}`);
@@ -291,29 +340,42 @@ export class AppointmentService {
 
   /**
    * Suggest alternative available slots closest to the requested time.
+   * Looks up to 3 days ahead if the requested day is closed or fully booked.
    * @param count - Number of alternatives to return (default 3)
    */
   async suggestAlternatives(userId: string, dateTimeIso: string, count: number = 3): Promise<string[]> {
-    const dateStr = dateTimeIso.split('T')[0];
-    const availableSlots = await this.getAvailableSlots(userId, dateStr);
-
-    if (availableSlots.length === 0) {
-      return [];
-    }
-
-    // Get requested time in minutes for proximity sorting
     const requestedDate = new Date(dateTimeIso);
     const istDate = toIST(requestedDate);
-    const requestedMinutes = istDate.getHours() * 60 + istDate.getMinutes();
+    const requestedMinutes = istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
 
-    // Sort by proximity to requested time
-    const sorted = [...availableSlots].sort((a, b) => {
-      const diffA = Math.abs(timeToMinutes(a) - requestedMinutes);
-      const diffB = Math.abs(timeToMinutes(b) - requestedMinutes);
-      return diffA - diffB;
-    });
+    // Try the requested date, then up to 3 days ahead
+    for (let dayOffset = 0; dayOffset <= 3; dayOffset++) {
+      const checkDate = new Date(`${dateTimeIso.split('T')[0]}T12:00:00+05:30`);
+      checkDate.setDate(checkDate.getDate() + dayOffset);
+      const checkDateStr = checkDate.toISOString().split('T')[0];
 
-    // Return top N formatted for display
-    return sorted.slice(0, count).map(formatTimeDisplay);
+      const availableSlots = await this.getAvailableSlots(userId, checkDateStr);
+
+      if (availableSlots.length === 0) {
+        continue;
+      }
+
+      // Determine the display day name (capitalized)
+      const checkIst = toIST(checkDate);
+      const dayName = DAY_NAMES[checkIst.getUTCDay()];
+      const dayLabel = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+
+      // Sort by proximity to requested time
+      const sorted = [...availableSlots].sort((a, b) => {
+        const diffA = Math.abs(timeToMinutes(a) - requestedMinutes);
+        const diffB = Math.abs(timeToMinutes(b) - requestedMinutes);
+        return diffA - diffB;
+      });
+
+      // Return top N formatted with day name: "Monday 10:00 AM"
+      return sorted.slice(0, count).map((slot) => `${dayLabel} ${formatTimeDisplay(slot)}`);
+    }
+
+    return [];
   }
 }

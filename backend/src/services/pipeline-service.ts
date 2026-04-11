@@ -307,6 +307,8 @@ export class PipelineService {
     // 8.5. Schedule appointment reminders
     console.log(`  [Pipeline] Appointment data:`, JSON.stringify(analysis.appointment));
 
+    let skipInventorySearch = false;
+
     if (analysis.appointment?.proposed_time_iso) {
       const serviceName = analysis.appointment.service || domain.defaultAppointmentService;
       const dueDate = analysis.appointment.proposed_time_iso.split('T')[0];
@@ -323,9 +325,17 @@ export class PipelineService {
 
       if (!slotResult.success) {
         // Slot not available — inject alternatives into conversation context
-        const altTimes = slotResult.alternatives?.join(', ') || 'no alternatives found';
-        console.log(`  [Pipeline] ❌ Slot not available. Alternatives: ${altTimes}`);
-        historyStrings.push(`System: The requested time slot is not available. Available times on that day: ${altTimes}. Please suggest these to the customer.`);
+        const hasAlternatives = slotResult.alternatives && slotResult.alternatives.length > 0;
+        if (hasAlternatives) {
+          const altTimes = slotResult.alternatives!.join(', ');
+          console.log(`  [Pipeline] ❌ Slot not available. Alternatives: ${altTimes}`);
+          historyStrings.push(`System: The requested time slot is not available. Available times on that day: ${altTimes}. Please suggest these to the customer.`);
+        } else {
+          console.log(`  [Pipeline] ❌ Slot not available. No alternatives (business may be closed).`);
+          historyStrings.push(`System: The requested time slot is not available and there are no open slots on that day. The business is closed on that day. They are open Monday–Saturday, 10 AM to 7 PM. Inform the customer and suggest they pick another day within business hours.`);
+        }
+        // Customer asked to book — don't search inventory or send photos
+        skipInventorySearch = true;
       } else {
         // Slot available — create the appointment task
         console.log(`  [Pipeline] ✅ Slot available. Creating appointment task: "${taskTitle}" on ${dueDate}`);
@@ -350,8 +360,26 @@ export class PipelineService {
         historyStrings.push(`System: Appointment for ${analysis.appointment.proposed_time_iso} for ${serviceName} has been booked! Confirm warmly.`);
       }
     } else if (analysis.appointment && !analysis.appointment.proposed_time_iso) {
-      console.log(`  [Pipeline] ⚠️ Appointment detected but no time extracted`);
-      historyStrings.push(`System: Customer wants to book but hasn't specified time. Ask for preferred date and time.`);
+      console.log(`  [Pipeline] ⚠️ Appointment detected but no time extracted — fetching available slots`);
+
+      // Fetch available slots for today and tomorrow so the AI can suggest them
+      const now = new Date();
+      const todayDate = now.toISOString().split('T')[0];
+      const tomorrowDate = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+
+      const [todaySlots, tomorrowSlots] = await Promise.all([
+        this.appointments.getAvailableSlots(userId, todayDate),
+        this.appointments.getAvailableSlots(userId, tomorrowDate),
+      ]);
+
+      const todaySlotsStr = todaySlots.length > 0 ? todaySlots.join(', ') : 'No slots available';
+      const tomorrowSlotsStr = tomorrowSlots.length > 0 ? tomorrowSlots.join(', ') : 'No slots available';
+
+      console.log(`  [Pipeline] Available slots — today (${todayDate}): ${todaySlotsStr} | tomorrow (${tomorrowDate}): ${tomorrowSlotsStr}`);
+
+      historyStrings.push(
+        `System: Customer wants to book but hasn't specified a time. Available time slots for today (${todayDate}): ${todaySlotsStr}. Available time slots for tomorrow (${tomorrowDate}): ${tomorrowSlotsStr}. Share these options with the customer and ask which slot they prefer.`
+      );
     } else {
       console.log(`  [Pipeline] No appointment in this message`);
     }
@@ -366,12 +394,18 @@ export class PipelineService {
     // ──────────────────────────────────────────────
     // 10. SMART CONTEXT FETCHING
     // Route to inventory OR knowledge base based on intent
+    // Skip entirely when handling a failed appointment booking
     // ──────────────────────────────────────────────
 
     let knowledgeChunks: string[] = [];
     let inventoryContext: { items: any[]; soldItems?: any[]; alternatives?: any[] } | null = null;
-    const isPhotoRequest = domain.patterns.photoRequest.test(messageText);
-    const isNegotiationRequest = domain.patterns.negotiation.test(messageText);
+
+    if (skipInventorySearch) {
+      console.log(`  [Pipeline] → Skipping inventory search (appointment booking flow)`);
+    }
+
+    const isPhotoRequest = !skipInventorySearch && domain.patterns.photoRequest.test(messageText);
+    const isNegotiationRequest = !skipInventorySearch && domain.patterns.negotiation.test(messageText);
 
     // Infer product from context ONLY when AI didn't already extract a product name.
     // If the customer said "Hyundai car photos", AI extracts brand=Hyundai — don't override with Thar from old context.
@@ -401,12 +435,12 @@ export class PipelineService {
       }
     }
 
-    const isInventoryQuery =
+    const isInventoryQuery = !skipInventorySearch && (
       domain.inventoryIntents.includes(analysis.intent) ||
       analysis.query_type !== 'general' ||
       isPhotoRequest ||
       isNegotiationRequest ||
-      Boolean(analysis.entities?.product_name);
+      Boolean(analysis.entities?.product_name));
 
     if (isInventoryQuery) {
       // Check if this is a general "show me everything" browse vs specific product query
@@ -466,7 +500,7 @@ export class PipelineService {
           historyStrings.push(`System: ${productName} is NOT in our inventory. Show the customer what IS available as alternatives. Be honest that we don't have their requested item.`);
         }
       }
-    } else {
+    } else if (!skipInventorySearch) {
       // KNOWLEDGE PATH — general question, search text knowledge base
       console.log(`  [Pipeline] → Routing to KNOWLEDGE BASE search`);
       knowledgeChunks = await this.rag.searchKnowledge(userId, messageText);
