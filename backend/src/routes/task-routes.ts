@@ -6,6 +6,7 @@ const taskCreate = z.object({
   title: z.string().min(1).max(500),
   due_date: z.string().nullish(),
   is_completed: z.boolean().default(false),
+  appointment_time: z.string().nullish(),
 });
 
 export const taskRoutes: FastifyPluginAsync = async (server: FastifyInstance) => {
@@ -43,6 +44,7 @@ export const taskRoutes: FastifyPluginAsync = async (server: FastifyInstance) =>
           title: body.title,
           due_date: body.due_date || null,
           is_completed: body.is_completed,
+          ...(body.appointment_time ? { appointment_time: body.appointment_time } : {}),
         })
         .select()
         .single();

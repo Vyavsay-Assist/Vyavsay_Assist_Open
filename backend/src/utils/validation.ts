@@ -133,6 +133,7 @@ export const taskUpdate = z.object({
   is_completed: z.boolean().nullish(),
   title: z.string().max(500).nullish(),
   due_date: z.string().nullish(),
+  appointment_time: z.string().nullish(),
 });
 
 // ─── File Processing ─────────────────────────────────

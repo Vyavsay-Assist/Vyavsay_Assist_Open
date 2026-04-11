@@ -120,7 +120,12 @@ const Appointments: React.FC = () => {
         timeLabel = ` at ${String(h12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ampm}`;
       }
       const title = `📅 Appointment: ${formName.trim()} — ${formService}${timeLabel}`;
-      await client.post('/tasks', { title, due_date: formDate, is_completed: false });
+      await client.post('/tasks', {
+        title,
+        due_date: formDate,
+        is_completed: false,
+        appointment_time: formTime ? new Date(`${formDate}T${formTime}`).toISOString() : null,
+      });
       setFormName(''); setFormService('Test Drive'); setFormDate(''); setFormTime('');
       setShowAddModal(false);
       await fetchAppointments();
@@ -303,7 +308,10 @@ const Appointments: React.FC = () => {
                 </span>
               </h3>
               {/* Time Slot Grid */}
-              <div className="grid grid-cols-3 gap-1.5 mb-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-ink-100 mb-2">
+                Available Time Slots
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
                 {TIME_SLOTS.map(slot => {
                   const isBooked = selectedDayAppts.some(a => {
                     const titleTime = a.title.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
@@ -314,7 +322,7 @@ const Appointments: React.FC = () => {
                       key={slot}
                       className={`text-[11px] py-2 rounded-xl font-semibold transition-all ${
                         isBooked
-                          ? 'bg-pastel-sage/30 text-soft-sage cursor-default'
+                          ? 'bg-pastel-sage text-white cursor-default'
                           : 'bg-cream-200/50 text-ink-100 hover:bg-pastel-lavender/40 cursor-pointer'
                       }`}
                       onClick={() => !isBooked && handleSlotClick(slot)}
@@ -323,6 +331,10 @@ const Appointments: React.FC = () => {
                     </button>
                   );
                 })}
+              </div>
+              <div className="flex items-center gap-4 mt-2 text-[10px] text-ink-50 mb-4">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-pastel-sage inline-block" /> Booked</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cream-200 inline-block" /> Available</span>
               </div>
 
               {selectedDayAppts.length === 0 ? (
@@ -338,6 +350,8 @@ const Appointments: React.FC = () => {
                 <div className="space-y-2">
                   {selectedDayAppts.map(a => {
                     const isActiveToday = !a.is_completed && new Date(a.due_date!).toDateString() === today.toDateString();
+                    const timeMatch = a.title.match(/at\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
+                    const apptTime = timeMatch ? timeMatch[1] : null;
                     return (
                       <div key={a.id} className={`flex items-center gap-3 p-3 rounded-2xl transition-all ${
                         a.is_completed ? 'opacity-50' :
@@ -349,6 +363,11 @@ const Appointments: React.FC = () => {
                           <p className="text-[11px] text-ink-50 flex items-center gap-1">
                             <User className="w-3 h-3" /> {a.customerName}
                           </p>
+                          {apptTime && (
+                            <p className="text-[11px] text-soft-lavender font-semibold flex items-center gap-1 mt-0.5">
+                              <Clock className="w-3 h-3" /> {apptTime}
+                            </p>
+                          )}
                         </div>
                         <div className="flex gap-1">
                           <button onClick={() => toggleComplete(a.id, a.is_completed)}
@@ -465,13 +484,24 @@ const Appointments: React.FC = () => {
               onChange={e => setFormDate(e.target.value)}
               required
             />
-            <Input
-              label="Time"
-              color="sage"
-              type="time"
-              value={formTime}
-              onChange={e => setFormTime(e.target.value)}
-            />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-ink-100 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" /> Time
+              </label>
+              <input
+                type="time"
+                value={formTime}
+                onChange={e => setFormTime(e.target.value)}
+                className={`w-full h-[54px] rounded-input px-4 text-sm text-ink-300 outline-none border-0 transition-all duration-150 focus:ring-2 focus:ring-ink-200/30 ${
+                  formTime ? 'bg-pastel-sage/40 ring-2 ring-soft-sage/30' : 'bg-pastel-sage/20'
+                }`}
+              />
+              {formTime && (
+                <span className="text-[10px] text-soft-sage font-semibold">
+                  Selected from time slot
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex justify-end gap-3 pt-3">
             <Button type="button" variant="ghost" size="md" onClick={() => setShowAddModal(false)}>
