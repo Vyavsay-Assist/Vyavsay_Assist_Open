@@ -301,7 +301,11 @@ export class AppointmentService {
 
     // Insert the appointment
     const dateStr = dateTimeIso.split('T')[0];
-    const title = `📅 Appointment: ${customerName} — ${service}`;
+    const istForTitle = toIST(new Date(dateTimeIso));
+    const formattedTime = formatTimeDisplay(
+      `${istForTitle.getUTCHours().toString().padStart(2, '0')}:${istForTitle.getUTCMinutes().toString().padStart(2, '0')}`
+    );
+    const title = `📅 Appointment: ${customerName} — ${service} at ${formattedTime}`;
 
     const insertData: any = {
       user_id: userId,

@@ -337,23 +337,9 @@ export class PipelineService {
         // Customer asked to book — don't search inventory or send photos
         skipInventorySearch = true;
       } else {
-        // Slot available — create the appointment task
-        console.log(`  [Pipeline] ✅ Slot available. Creating appointment task: "${taskTitle}" on ${dueDate}`);
-
-        const { error: apptError } = await this.supabase.from('wb_tasks').insert({
-          user_id: userId,
-          conversation_id: conversation.id,
-          title: taskTitle,
-          due_date: dueDate,
-          appointment_time: analysis.appointment.proposed_time_iso,
-          is_completed: false,
-        });
-
-        if (apptError) {
-          console.error(`  [Pipeline] ❌ Failed to create appointment task:`, apptError);
-        } else {
-          console.log(`  [Pipeline] ✅ Appointment task created successfully`);
-        }
+        // Slot available — bookSlot() already inserted the task into wb_tasks,
+        // so we only need to schedule reminders here.
+        console.log(`  [Pipeline] ✅ Slot booked by appointment-service: "${taskTitle}" on ${dueDate}`);
 
         reminderService.scheduleReminders(userId, customerJid, customerName, serviceName, analysis.appointment.proposed_time_iso);
 

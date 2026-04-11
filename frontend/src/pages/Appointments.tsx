@@ -23,6 +23,7 @@ interface Appointment {
   id: string;
   title: string;
   due_date: string | null;
+  appointment_time: string | null;
   is_completed: boolean;
   created_at: string;
   customerName: string;
@@ -314,6 +315,10 @@ const Appointments: React.FC = () => {
               <div className="grid grid-cols-3 gap-1.5">
                 {TIME_SLOTS.map(slot => {
                   const isBooked = selectedDayAppts.some(a => {
+                    if (a.appointment_time) {
+                      const t = new Date(a.appointment_time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+                      return t.toLowerCase() === slot.toLowerCase();
+                    }
                     const titleTime = a.title.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
                     return titleTime && titleTime[1].toLowerCase() === slot.toLowerCase();
                   });
@@ -351,7 +356,10 @@ const Appointments: React.FC = () => {
                   {selectedDayAppts.map(a => {
                     const isActiveToday = !a.is_completed && new Date(a.due_date!).toDateString() === today.toDateString();
                     const timeMatch = a.title.match(/at\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
-                    const apptTime = timeMatch ? timeMatch[1] : null;
+                    const extractedTime = timeMatch ? timeMatch[1] : null;
+                    const displayTime = a.appointment_time
+                      ? new Date(a.appointment_time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+                      : extractedTime;
                     return (
                       <div key={a.id} className={`flex items-center gap-3 p-3 rounded-2xl transition-all ${
                         a.is_completed ? 'opacity-50' :
@@ -363,9 +371,9 @@ const Appointments: React.FC = () => {
                           <p className="text-[11px] text-ink-50 flex items-center gap-1">
                             <User className="w-3 h-3" /> {a.customerName}
                           </p>
-                          {apptTime && (
-                            <p className="text-[11px] text-soft-lavender font-semibold flex items-center gap-1 mt-0.5">
-                              <Clock className="w-3 h-3" /> {apptTime}
+                          {displayTime && (
+                            <p className="text-[12px] text-soft-lavender font-semibold flex items-center gap-1 mt-0.5">
+                              <Clock className="w-3 h-3" /> {displayTime}
                             </p>
                           )}
                         </div>
