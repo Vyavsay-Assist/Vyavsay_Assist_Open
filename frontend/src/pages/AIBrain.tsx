@@ -157,6 +157,7 @@ const AIBrain: React.FC = () => {
   const handleItemSaved = async () => {
     setShowItemModal(false);
     setEditingItem(null);
+    await new Promise(r => setTimeout(r, 500));
     setRefreshKey(prev => prev + 1);
     await fetchInventoryStats();
   };
@@ -188,6 +189,8 @@ const AIBrain: React.FC = () => {
     try {
       const { data } = await client.post(`/sheets/${action}`);
       setSyncMsg(data.message || `Sync complete! Added: ${data.added || 0}, Updated: ${data.updated || 0}`);
+      // Small delay to ensure DB has committed all changes
+      await new Promise(r => setTimeout(r, 500));
       // Refresh inventory list AND stats
       setRefreshKey(prev => prev + 1);
       await fetchInventoryStats();
@@ -361,7 +364,7 @@ const AIBrain: React.FC = () => {
               key={refreshKey}
               schema={schema}
               onEdit={handleEditItem}
-              onRefresh={async () => { setRefreshKey(prev => prev + 1); await fetchInventoryStats(); }}
+              onRefresh={async () => { await new Promise(r => setTimeout(r, 500)); setRefreshKey(prev => prev + 1); await fetchInventoryStats(); }}
             />
           )}
         </motion.div>
@@ -486,7 +489,7 @@ const AIBrain: React.FC = () => {
       {/* File Upload Modal */}
       {showFileUpload && (
         <FileUpload
-          onComplete={async () => { setRefreshKey(prev => prev + 1); await fetchInventoryStats(); fetchSchema(); }}
+          onComplete={async () => { await new Promise(r => setTimeout(r, 500)); setRefreshKey(prev => prev + 1); await fetchInventoryStats(); fetchSchema(); }}
           onClose={() => setShowFileUpload(false)}
         />
       )}

@@ -58,18 +58,32 @@ export class SheetsSyncService {
   async exportToSheet(supabase: SupabaseClient, userId: string): Promise<number> {
     const sheetName = config.GOOGLE_SHEET_NAME || 'Sheet1';
 
-    const { data: items, error } = await supabase
-      .from('wb_catalog_items')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: true });
+    // Paginate to fetch ALL items — Supabase default limit can be as low as 32
+    const allItems: any[] = [];
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    while (true) {
+      const { data: page, error } = await supabase
+        .from('wb_catalog_items')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1);
 
-    if (error) throw new Error(`DB fetch failed: ${error.message}`);
-    if (!items || items.length === 0) throw new Error('No inventory items to export');
+      if (error) throw new Error(`DB fetch failed: ${error.message}`);
+      if (!page || page.length === 0) break;
+      allItems.push(...page);
+      if (page.length < PAGE_SIZE) break;   // last page
+      offset += PAGE_SIZE;
+    }
+
+    if (allItems.length === 0) throw new Error('No inventory items to export');
+
+    console.log('[Sheets] Exporting', allItems.length, 'items for user', userId.slice(0, 8));
 
     const rows: string[][] = [HEADERS];
-    for (const item of items) {
+    for (const item of allItems) {
       const attrs = item.attributes || {};
       rows.push([
         item.item_name || '',
@@ -87,16 +101,19 @@ export class SheetsSyncService {
       ]);
     }
 
-    await this.sheetsClear(`${sheetName}!A1:Z1000`);
+    // Clear enough rows to cover existing data + new data (header + items + buffer)
+    const clearEndRow = Math.max(1000, rows.length + 100);
+    await this.sheetsClear(`${sheetName}!A1:Z${clearEndRow}`);
     await this.sheetsUpdate(`${sheetName}!A1`, rows);
 
-    console.log(`[Sheets] Exported ${items.length} items to Google Sheet`);
-    return items.length;
+    console.log(`[Sheets] Exported ${allItems.length} items to Google Sheet`);
+    return allItems.length;
   }
 
   async importFromSheet(supabase: SupabaseClient, userId: string): Promise<{ added: number; updated: number }> {
     const sheetName = config.GOOGLE_SHEET_NAME || 'Sheet1';
-    const values = await this.sheetsGet(`${sheetName}!A1:Z1000`);
+    // Read up to 10000 rows — Google Sheets API returns only populated rows
+    const values = await this.sheetsGet(`${sheetName}!A1:Z10000`);
 
     if (!values || values.length < 2) {
       return { added: 0, updated: 0 };
@@ -136,26 +153,52 @@ export class SheetsSyncService {
       if (obj['kilometers'] || obj['km_driven']) attributes.km_driven = obj['kilometers'] || obj['km_driven'];
 
       // Check if item exists (include inactive items to avoid re-adding deleted ones)
-      const { data: existingList } = await supabase
+      // First try exact match, then fall back to case-insensitive exact match
+      let { data: existingList, error: lookupErr } = await supabase
         .from('wb_catalog_items')
         .select('id, is_active')
         .eq('user_id', userId)
-        .ilike('item_name', itemName)
+        .eq('item_name', itemName)
         .limit(1);
+
+      if (lookupErr) {
+        console.error(`[Sheets] Lookup error for "${itemName}":`, lookupErr.message);
+      }
+
+      // If exact match found nothing, try case-insensitive (no wildcards = exact ilike)
+      if (!existingList || existingList.length === 0) {
+        const fallback = await supabase
+          .from('wb_catalog_items')
+          .select('id, is_active')
+          .eq('user_id', userId)
+          .ilike('item_name', itemName)
+          .limit(1);
+        if (fallback.error) {
+          console.error(`[Sheets] Case-insensitive lookup error for "${itemName}":`, fallback.error.message);
+        }
+        existingList = fallback.data;
+      }
+
       const existing = existingList?.[0] || null;
+      console.log('[Sheets] Processing:', itemName, 'found:', existing?.id || 'NEW');
 
       if (existing) {
         if (!existing.is_active) {
           // Item was deleted from dashboard — skip it, don't re-add
+          console.log(`[Sheets] Skipping inactive item: "${itemName}" (id: ${existing.id})`);
           continue;
         }
-        await supabase
+        const { error: updateErr } = await supabase
           .from('wb_catalog_items')
           .update({ category, price: price || null, quantity, attributes })
           .eq('id', existing.id);
+        if (updateErr) {
+          console.error(`[Sheets] Update failed for "${itemName}" (id: ${existing.id}):`, updateErr.message);
+          continue;
+        }
         updated++;
       } else {
-        await supabase
+        const { error: insertErr } = await supabase
           .from('wb_catalog_items')
           .insert({
             user_id: userId,
@@ -166,6 +209,10 @@ export class SheetsSyncService {
             attributes,
             is_active: true,
           });
+        if (insertErr) {
+          console.error(`[Sheets] Insert failed for "${itemName}":`, insertErr.message);
+          continue;
+        }
         added++;
       }
     }

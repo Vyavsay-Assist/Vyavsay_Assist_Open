@@ -31,21 +31,25 @@ export class CronService {
     console.log('📅 Cron Service Initialized (Daily Reports, Follow-ups & Sheets Sync)');
   }
 
-  /** Auto-sync inventory with Google Sheets */
+  /** Auto-sync inventory with Google Sheets (only for the primary user) */
   private async autoSyncSheets(): Promise<void> {
     try {
       const sheetsSync = new SheetsSyncService();
-      const { data: users } = await this.supabase.from('wb_users').select('id').limit(5);
+      // Only sync the first user who has a business_name set (primary business owner)
+      const { data: users } = await this.supabase
+        .from('wb_users')
+        .select('id')
+        .not('business_name', 'is', null)
+        .not('business_name', 'eq', '')
+        .limit(1);
       if (!users?.length) return;
 
-      for (const user of users) {
-        try {
-          await sheetsSync.syncBidirectional(this.supabase, user.id);
-        } catch (err: any) {
-          // Skip silently if Google Sheets not configured for this user
-          if (err.message?.includes('not configured')) continue;
-          console.error(`[Cron] Sheets sync failed for ${user.id.slice(0, 8)}:`, err.message);
-        }
+      const user = users[0];
+      try {
+        await sheetsSync.syncBidirectional(this.supabase, user.id);
+      } catch (err: any) {
+        if (err.message?.includes('not configured')) return;
+        console.error(`[Cron] Sheets sync failed for ${user.id.slice(0, 8)}:`, err.message);
       }
     } catch (err: any) {
       console.error('[Cron] Sheets auto-sync error:', err.message);
