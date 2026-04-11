@@ -21,7 +21,6 @@ const drawerItems = [
   { icon: QrCode, label: 'Connect WhatsApp', path: '/qr-scanner' },
   { icon: CheckSquare, label: 'Tasks', path: '/tasks' },
   { icon: CalendarDays, label: 'Appointments', path: '/appointments' },
-  { icon: Phone, label: 'Voice Calls', path: '/voice-calls' },
   { icon: BarChart3, label: 'Analytics', path: '/analytics' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ] as const;
