@@ -4,7 +4,6 @@ import {
   QrCode,
   CheckSquare,
   CalendarDays,
-  Phone,
   BarChart3,
   Settings,
   LogOut,
