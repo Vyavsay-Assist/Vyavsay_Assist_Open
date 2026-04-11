@@ -136,13 +136,13 @@ export class SheetsSyncService {
       if (obj['kilometers'] || obj['km_driven']) attributes.km_driven = obj['kilometers'] || obj['km_driven'];
 
       // Check if item exists (include inactive items to avoid re-adding deleted ones)
-      const { data: existing } = await supabase
+      const { data: existingList } = await supabase
         .from('wb_catalog_items')
         .select('id, is_active')
         .eq('user_id', userId)
         .ilike('item_name', itemName)
-        .limit(1)
-        .single();
+        .limit(1);
+      const existing = existingList?.[0] || null;
 
       if (existing) {
         if (!existing.is_active) {
@@ -175,12 +175,12 @@ export class SheetsSyncService {
   }
 
   async syncBidirectional(supabase: SupabaseClient, userId: string) {
-    // 1. Export DB → Sheet first (DB is source of truth; clears stale/deleted items)
-    const exportCount = await this.exportToSheet(supabase, userId);
-    // 2. Then import new items from Sheet (only truly new items survive)
+    // 1. FIRST import from Sheet → DB (picks up user's edits in the sheet)
     const importResult = await this.importFromSheet(supabase, userId);
+    // 2. THEN export DB → Sheet (syncs back any dashboard-only items, removes deleted)
+    const exportCount = await this.exportToSheet(supabase, userId);
     return {
-      message: `Sync complete! Exported ${exportCount} items to Sheet. Imported: ${importResult.added} new, ${importResult.updated} updated.`,
+      message: `Sync complete! Imported: ${importResult.added} new, ${importResult.updated} updated. Exported ${exportCount} items to Sheet.`,
       ...importResult,
       exported: exportCount,
     };
