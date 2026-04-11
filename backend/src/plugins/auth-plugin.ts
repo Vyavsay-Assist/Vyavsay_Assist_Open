@@ -14,6 +14,7 @@ declare module 'fastify' {
 // Routes that don't require authentication
 const PUBLIC_ROUTES = [
   '/api/health',
+  '/api/vapi/webhook',
 ];
 
 // Use the anon-key client for auth verification (not service role)
