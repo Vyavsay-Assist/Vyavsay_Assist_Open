@@ -12,6 +12,8 @@ import Settings from './pages/Settings';
 import QRScanner from './pages/QRScanner';
 import AIBrain from './pages/AIBrain';
 import Appointments from './pages/Appointments';
+import VoiceCalls from './pages/VoiceCalls';
+import OwnerDashboard from './pages/OwnerDashboard';
 import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
 
@@ -57,6 +59,8 @@ const AppContent: React.FC = () => {
         <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
         <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
         <Route path="/appointments" element={<ProtectedRoute><Appointments /></ProtectedRoute>} />
+        <Route path="/voice-calls" element={<ProtectedRoute><VoiceCalls /></ProtectedRoute>} />
+        <Route path="/owner/dashboard" element={<ProtectedRoute><OwnerDashboard /></ProtectedRoute>} />
         <Route path="/ai-brain" element={<ProtectedRoute><AIBrain /></ProtectedRoute>} />
         <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

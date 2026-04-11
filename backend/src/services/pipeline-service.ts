@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { analyzeMessage, generateReply, generateSummary, AnalysisResult } from './ai-router.js';
+import { analyzeMessage, generateReply, generateSummary, AnalysisResult, identifyCarFromImage } from './ai-router.js';
 import { RagService } from './rag-service.js';
 import { CatalogService } from './catalog-service.js';
 import { baileysAdapter } from './baileys-adapter.js';
@@ -8,6 +8,14 @@ import { createClient } from '@supabase/supabase-js';
 import { config } from '../config/environment.js';
 import { getDomain } from '../domains/domain-router.js';
 import type { BaseDomain } from '../domains/types.js';
+
+/** Optional media attachment from Baileys adapter */
+export interface MediaAttachment {
+  type: 'voice_note' | 'image';
+  base64?: string;
+  mimetype?: string;
+  durationSecs?: number;
+}
 
 const URL_REGEX = /^https?:\/\//i;
 
@@ -37,8 +45,9 @@ export class PipelineService {
     customerJid: string,
     customerName: string,
     customerPhone: string,
-    messageText: string
-  ): Promise<{ success: boolean; autoReplied: boolean; analysis: any }> {
+    messageText: string,
+    media?: MediaAttachment
+  ): Promise<{ success: boolean; autoReplied: boolean; analysis: any; replyText?: string }> {
    try {
     // 1. Fetch or create user
     let { data: user } = await this.supabase
@@ -106,11 +115,17 @@ export class PipelineService {
       return { success: false, autoReplied: false, analysis: null };
     }
 
-    // 3. Store incoming message
+    // 3. Store incoming message (annotate source if voice/image)
+    const senderLabel = media?.type === 'voice_note' ? 'customer'
+      : media?.type === 'image' ? 'customer'
+      : 'customer';
+    const storedContent = media?.type === 'voice_note'
+      ? `🎤 [Voice Note]: ${messageText}`
+      : messageText;
     await this.supabase.from('wb_messages').insert({
       conversation_id: conversation.id,
-      sender: 'customer',
-      content: messageText,
+      sender: senderLabel,
+      content: storedContent,
     });
 
     // 4. Get conversation history for context — load MORE messages for better memory
@@ -141,7 +156,97 @@ export class PipelineService {
       return { success: true, autoReplied: true, analysis: null };
     }
 
-    // 4.5 Build conversation memory — a compressed summary of what's been discussed
+    // 4.5 IMAGE RECOGNITION — if customer sent a car photo, identify and match inventory
+    if (media?.type === 'image' && media.base64 && media.mimetype) {
+      console.log(`  [Pipeline] 📷 Image received — running car identification...`);
+      try {
+        const carId = await identifyCarFromImage(media.base64, media.mimetype);
+        console.log(`  [Pipeline] Car ID result:`, JSON.stringify(carId));
+
+        if (carId.is_car) {
+          // Search inventory for matching cars
+          const queryText = `${carId.brand} ${carId.model} ${carId.year_estimate} ${carId.color} ${carId.body_type}`;
+          const matches = await this.catalog.hybridSearch(userId, queryText, {
+            product_name: `${carId.brand} ${carId.model}`,
+            category: carId.body_type || undefined,
+            attributes: {
+              ...(carId.brand ? { brand: carId.brand } : {}),
+              ...(carId.color ? { color: carId.color } : {}),
+            },
+          });
+
+          const available = matches.filter((m: any) => m.quantity > 0);
+          const useHinglish = domain.patterns.hinglishHint.test(messageText) ||
+            (historyStrings.length > 0 && domain.patterns.hinglishHint.test(historyStrings.slice(-3).join(' ')));
+
+          let imageReply: string;
+          if (available.length > 0) {
+            const itemList = available.slice(0, 3).map((item: any, i: number) => {
+              const price = item.price ? (item.price >= 100000 ? `₹${(item.price / 100000).toFixed(1)}L` : `₹${item.price}`) : 'Price on request';
+              const attrs = item.attributes || {};
+              const details = [attrs.year, attrs.fuel_type, attrs.transmission, attrs.color].filter(Boolean).join(', ');
+              return `${i + 1}. ${item.item_name} — ${price}${details ? ` (${details})` : ''}`;
+            }).join('\n');
+
+            imageReply = useHinglish
+              ? `Ye ${carId.brand} ${carId.model} ${carId.color || ''} lagti hai! 🚗\n\nHamare paas similar options hain:\n${itemList}\n\nKoi particular car dekhna chahenge? Photos bhej sakta hoon! 📸`
+              : `This looks like a ${carId.brand} ${carId.model} ${carId.color || ''}! 🚗\n\nWe have similar options available:\n${itemList}\n\nWould you like to see photos or details of any of these?`;
+          } else {
+            imageReply = useHinglish
+              ? `Ye ${carId.brand} ${carId.model} ${carId.year_estimate || ''} ${carId.color || ''} lagti hai.\n\nAbhi hamare paas ye exact model available nahi hai, lekin kuch similar options dekhna chahenge?`
+              : `This looks like a ${carId.brand} ${carId.model} ${carId.year_estimate || ''} ${carId.color || ''}.\n\nWe don't have this exact model right now, but would you like to see similar options?`;
+          }
+
+          // Send reply and store
+          const sent = await baileysAdapter.sendMessage(userId, customerJid, imageReply);
+          if (sent) {
+            await this.supabase.from('wb_messages').insert({
+              conversation_id: conversation.id, sender: 'ai', content: imageReply,
+            });
+
+            // Send photos of matched items
+            for (const item of available.slice(0, 2)) {
+              const images = this.extractImageUrls(item);
+              if (images.length > 0) {
+                const price = item.price ? (item.price >= 100000 ? `₹${(item.price / 100000).toFixed(1)}L` : `₹${item.price}`) : '';
+                await baileysAdapter.sendImage(userId, customerJid, images[0], `${item.item_name}${price ? ` — ${price}` : ''}`);
+              }
+            }
+          }
+
+          // Update lead with image-based inquiry
+          await this.upsertLead(userId, conversation.id, customerName, {
+            intent: 'inventory_inquiry',
+            lead_score: 'medium',
+            confidence: 0.8,
+            tasks: [],
+            appointment: null,
+            should_auto_reply: true,
+            escalation_reason: null,
+            language_detected: useHinglish ? 'hi' : 'en',
+            summary_update: `Customer sent a photo of ${carId.brand} ${carId.model}. ${available.length > 0 ? `Matched ${available.length} inventory items.` : 'No exact match in inventory.'}`,
+            entities: {
+              product_name: `${carId.brand} ${carId.model}`,
+              category: carId.body_type,
+              brand: carId.brand,
+              price_min: null,
+              price_max: null,
+              attributes: { color: carId.color, year: carId.year_estimate },
+            },
+            query_type: 'structured',
+          }, domain, conversation);
+
+          return { success: true, autoReplied: true, analysis: null, replyText: imageReply };
+        } else {
+          console.log(`  [Pipeline] Image is not a car — processing caption as text`);
+          // Not a car image — fall through to normal text processing with caption
+        }
+      } catch (imgErr: any) {
+        console.error(`  [Pipeline] ❌ Car identification failed: ${imgErr.message} — falling through to text processing`);
+      }
+    }
+
+    // 4.6 Build conversation memory — a compressed summary of what's been discussed
     // This prevents the AI from asking repetitive questions
     const conversationMemory = await this.buildConversationMemory(conversation, historyStrings);
 
@@ -534,6 +639,8 @@ export class PipelineService {
         });
         autoReplied = true;
       }
+
+      return { success: true, autoReplied, analysis, replyText: autoReplied ? finalReplyText : undefined };
     } else if (!conversation.ai_paused && !analysis.escalation_reason) {
       // Fallback acknowledgement to avoid silent chats when AI gating blocks a full reply.
       const fallback = domain.fallbacks.genericAcknowledgement;

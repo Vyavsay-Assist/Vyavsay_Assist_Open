@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -26,10 +27,16 @@ const pastelCycle = [
 
 const Settings: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const hasLocalEditsRef = useRef(false);
+  const ownerEmails = ((import.meta.env.VITE_OWNER_EMAILS as string | undefined) || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  const canOpenOwnerDashboard = Boolean(user?.email && ownerEmails.includes(user.email.toLowerCase()));
 
   const updateProfileField = (field: string, value: any) => {
     hasLocalEditsRef.current = true;
@@ -263,6 +270,27 @@ const Settings: React.FC = () => {
                   </button>
                 );
               })}
+
+              {canOpenOwnerDashboard && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                >
+                  <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-ink-100 mb-3">Owner tools</h3>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/owner/dashboard')}
+                    className="w-full flex items-center justify-between gap-4 px-4 py-4 bg-cream-100/60 rounded-[20px] border border-cream-200 hover:bg-cream-100 transition-colors text-left"
+                  >
+                    <div>
+                      <div className="text-[14px] font-semibold text-ink-300">Open owner dashboard</div>
+                      <div className="text-[12px] text-ink-50 mt-1">See aggregate customer, device, and usage health.</div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-ink-100 shrink-0" />
+                  </button>
+                </motion.div>
+              )}
             </div>
           </motion.div>
         ))}

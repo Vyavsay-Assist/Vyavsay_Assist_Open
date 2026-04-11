@@ -7,6 +7,7 @@ declare module 'fastify' {
   interface FastifyRequest {
     userId: string;
     userEmail: string;
+    isOwner: boolean;
   }
 }
 
@@ -21,6 +22,7 @@ const authClient = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY ||
 export default fp(async (fastify) => {
   fastify.decorateRequest('userId', '');
   fastify.decorateRequest('userEmail', '');
+  fastify.decorateRequest('isOwner', false);
 
   fastify.addHook('onRequest', async (request, reply) => {
     // Skip auth for public routes
@@ -51,6 +53,7 @@ export default fp(async (fastify) => {
       // Attach verified user ID to request — all routes use this instead of query/body userId
       request.userId = user.id;
       request.userEmail = user.email || '';
+      request.isOwner = Boolean(user.email && config.OWNER_EMAILS.includes(user.email.toLowerCase()));
       if (request.method === 'PATCH' || request.method === 'GET') {
         fastify.log.info({ userId: user.id, method: request.method, url: request.url }, 'Auth successful');
       }

@@ -1,8 +1,10 @@
-import { proto } from '@whiskeysockets/baileys';
+import { proto, downloadMediaMessage, WAMessage } from '@whiskeysockets/baileys';
 import { rateLimiter } from '../utils/rate-limiter.js';
 import { inboundRateLimiter } from '../utils/inbound-rate-limiter.js';
 import { sessionManager } from './session-manager.js';
 import { pipelineService } from './pipeline-service.js';
+import { transcribeVoiceNote } from './voice-transcription-service.js';
+import { generateVoiceReply, isVoiceReplyEnabled } from './tts-service.js';
 
 /**
  * BaileysAdapter — bridges Baileys message events to the AI pipeline.
@@ -33,21 +35,94 @@ export class BaileysAdapter {
       // Skip outgoing messages (fromMe filter — learned from n8n workflow)
       if (msg.key?.fromMe) return;
 
-      // Skip non-text messages for now
-      const parsed = this.parseMessage(msg);
-      if (!parsed) return;
+      const jid = msg.key?.remoteJid;
+      if (!jid) return;
 
       // Skip group messages — only handle 1-on-1 chats
-      if (parsed.jid.includes('@g.us')) return;
+      if (jid.includes('@g.us')) return;
 
       // Skip status broadcasts
-      if (parsed.jid === 'status@broadcast') return;
+      if (jid === 'status@broadcast') return;
 
       // Inbound rate limiting — prevent message flood abuse
-      if (!inboundRateLimiter.shouldProcess(parsed.jid)) {
-        console.warn(`⚠️ [RateLimit] Throttled ${parsed.jid} — too many messages`);
+      if (!inboundRateLimiter.shouldProcess(jid)) {
+        console.warn(`⚠️ [RateLimit] Throttled ${jid} — too many messages`);
         return;
       }
+
+      const customerPhone = jid.split('@')[0];
+      const customerName = msg.pushName || customerPhone;
+
+      // ── Handle Voice Notes ──
+      const audioMsg = msg.message?.audioMessage;
+      if (audioMsg?.ptt) {
+        console.log(`\n🎤 [${userId.slice(0, 8)}] ${customerName}: [Voice Note ${audioMsg.seconds || '?'}s]`);
+        try {
+          const audioBuffer = await downloadMediaMessage(msg as WAMessage, 'buffer', {});
+          const { text, provider } = await transcribeVoiceNote(audioBuffer as Buffer);
+
+          if (!text || text.trim().length === 0) {
+            console.warn(`⚠️ Voice note transcription was empty — skipping`);
+            return;
+          }
+
+          console.log(`📝 [Transcribed via ${provider}]: "${text.slice(0, 80)}..."`);
+
+          // Process transcribed text through the normal AI pipeline
+          const result = await pipelineService.processIncomingMessage(
+            userId, jid, customerName, customerPhone, text,
+            { type: 'voice_note', durationSecs: audioMsg.seconds || 0 }
+          );
+
+          // If voice reply is enabled and the pipeline sent a text reply, also send voice version
+          if (result.autoReplied && result.replyText && isVoiceReplyEnabled()) {
+            try {
+              const voiceBuffer = await generateVoiceReply(result.replyText);
+              if (voiceBuffer) {
+                await this.sendVoiceNote(userId, jid, voiceBuffer);
+                console.log(`🔊 [${userId.slice(0, 8)}] Voice reply sent to ${customerPhone}`);
+              }
+            } catch (ttsErr: any) {
+              console.warn(`⚠️ Voice reply generation failed (text reply already sent): ${ttsErr.message}`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`❌ Voice note processing failed: ${err.message}`);
+        }
+        return;
+      }
+
+      // ── Handle Image Messages ──
+      const imageMsg = msg.message?.imageMessage;
+      if (imageMsg) {
+        const caption = imageMsg.caption || '';
+        console.log(`\n📷 [${userId.slice(0, 8)}] ${customerName}: [Image${caption ? ` "${caption}"` : ''}]`);
+        try {
+          const imageBuffer = await downloadMediaMessage(msg as WAMessage, 'buffer', {});
+          const base64 = (imageBuffer as Buffer).toString('base64');
+          const mimetype = imageMsg.mimetype || 'image/jpeg';
+
+          // Process through pipeline with image data
+          await pipelineService.processIncomingMessage(
+            userId, jid, customerName, customerPhone,
+            caption || '[Customer sent an image]',
+            { type: 'image', base64, mimetype }
+          );
+        } catch (err: any) {
+          console.error(`❌ Image processing failed: ${err.message}`);
+          // Fall back to processing just the caption if image download fails
+          if (caption) {
+            await pipelineService.processIncomingMessage(
+              userId, jid, customerName, customerPhone, caption
+            );
+          }
+        }
+        return;
+      }
+
+      // ── Handle Text Messages (existing flow) ──
+      const parsed = this.parseMessage(msg);
+      if (!parsed) return;
 
       console.log(`\n📩 [${userId.slice(0, 8)}] ${parsed.customerName}: "${parsed.text}"`);
 
@@ -125,6 +200,38 @@ export class BaileysAdapter {
       return true;
     } catch (err: any) {
       console.error(`❌ Send failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** Send a voice note (PTT) via Baileys (rate-limited) */
+  async sendVoiceNote(userId: string, jid: string, audioBuffer: Buffer): Promise<boolean> {
+    try {
+      const socket = sessionManager.getSocket(userId);
+      if (!socket) {
+        console.error(`❌ No active socket for user ${userId.slice(0, 8)}`);
+        return false;
+      }
+
+      await rateLimiter.waitForSlot(userId);
+
+      // Show "recording audio" presence
+      try {
+        await socket.sendPresenceUpdate('recording' as any, jid);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch {
+        // Presence update is best-effort
+      }
+
+      await socket.sendMessage(jid, {
+        audio: audioBuffer,
+        mimetype: 'audio/ogg; codecs=opus',
+        ptt: true,
+      });
+      console.log(`🔊 [${userId.slice(0, 8)}] Voice note sent to ${jid.split('@')[0]}`);
+      return true;
+    } catch (err: any) {
+      console.error(`❌ Voice note send failed: ${err.message}`);
       return false;
     }
   }

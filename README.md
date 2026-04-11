@@ -68,6 +68,7 @@ GITHUB_PAT=your-github-pat-for-ai
 AUTH_SESSIONS_DIR=./auth_sessions_v2/
 FRONTEND_URL=http://localhost:3004
 NODE_ENV=development
+OWNER_EMAILS=your.email@example.com
 ```
 
 **Frontend** (`frontend/.env`):
@@ -75,16 +76,28 @@ NODE_ENV=development
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 VITE_API_BASE_URL=http://localhost:3005/api
+VITE_OWNER_EMAILS=loyamahesh3@gmail.com
 ```
 
-### 3. Database Setup
+### 3. Owner Dashboard Access
+Use the owner email `loyamahesh3@gmail.com` in both backend and frontend env files.
+
+After starting the app:
+1. Sign in with `loyamahesh3@gmail.com`.
+2. Open **Settings**.
+3. Click **Open owner dashboard** under **Owner tools**.
+4. You can also open `http://localhost:3004/owner/dashboard` directly while logged in.
+
+If you see a 403 error, the email is not present in `OWNER_EMAILS` on the backend or `VITE_OWNER_EMAILS` on the frontend.
+
+### 4. Database Setup
 Run the migration SQL in Supabase SQL Editor:
 ```bash
 # File: backend/database/migrations/001-schema.sql
 ```
-This creates all tables (`wb_users`, `wb_conversations`, `wb_messages`, `wb_leads`, `wb_tasks`, `wb_knowledge_base`) with pgvector indexes and the `wb_match_knowledge` RPC function.
+This creates all tables (`wb_users`, `wb_conversations`, `wb_messages`, `wb_leads`, `wb_tasks`, `wb_knowledge_base`) with pgvector indexes and the `wb_match_knowledge` RPC function. Voice call tracking adds `wb_calls` and `wb_call_actions` via `backend/database/migrations/005-voice-calls.sql`.
 
-### 4. Run
+### 5. Run
 ```bash
 # Terminal 1 — Backend
 cd backend && npm run dev
@@ -121,7 +134,8 @@ Vyavsay_Baileys/
 │   │   │   ├── task-routes.ts         # Extracted tasks
 │   │   │   ├── knowledge-routes.ts    # Knowledge base CRUD
 │   │   │   ├── user-routes.ts         # User profile
-│   │   │   └── health-routes.ts       # Analytics & health
+│   │   │   ├── health-routes.ts       # Analytics & health
+│   │   │   └── owner-routes.ts        # Owner-only aggregate dashboard
 │   │   ├── services/
 │   │   │   ├── session-manager.ts     # Baileys socket management
 │   │   │   ├── baileys-adapter.ts     # Message bridge

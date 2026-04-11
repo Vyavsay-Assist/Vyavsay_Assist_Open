@@ -293,3 +293,80 @@ export async function generateFollowUp(
     return d.fallbacks.followUpFallback(customerName);
   }
 }
+
+/** Structured car identification result from AI Vision */
+export interface CarIdentification {
+  brand: string;
+  model: string;
+  year_estimate: string;
+  color: string;
+  body_type: string;
+  confidence: 'high' | 'medium' | 'low';
+  is_car: boolean;
+}
+
+const IMAGE_TIMEOUT_MS = 15000;
+
+/** Identify a car from a base64-encoded image using GPT-4o Vision */
+export async function identifyCarFromImage(
+  base64Image: string,
+  mimetype: string
+): Promise<CarIdentification> {
+  const fallback: CarIdentification = {
+    brand: 'unknown',
+    model: 'unknown',
+    year_estimate: 'unknown',
+    color: 'unknown',
+    body_type: 'unknown',
+    confidence: 'low',
+    is_car: false,
+  };
+
+  try {
+    const response = await withTimeout(
+      openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Identify the car in this image. Common Indian brands: Maruti Suzuki, Tata, Hyundai, Mahindra, Kia, Toyota, Honda, MG, Skoda, Volkswagen, Renault, Nissan, Jeep, Citroen.
+
+Return JSON with these fields:
+- brand: manufacturer name
+- model: model name
+- year_estimate: approximate year or year range (e.g. "2020-2022")
+- color: exterior color
+- body_type: one of SUV, Sedan, Hatchback, MPV, Pickup, Coupe
+- confidence: "high", "medium", or "low"
+- is_car: boolean — false if the image does not contain a car`,
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimetype};base64,${base64Image}`,
+                  detail: 'low',
+                },
+              },
+            ],
+          },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 250,
+        temperature: 0.2,
+      }),
+      IMAGE_TIMEOUT_MS,
+      'Car image identification'
+    );
+
+    const text = response.choices[0].message.content || '{}';
+    const result: CarIdentification = JSON.parse(text);
+    console.log('🚗 Car identification result:', JSON.stringify(result));
+    return result;
+  } catch (err: any) {
+    console.error('❌ Car image identification failed:', err.message);
+    return fallback;
+  }
+}

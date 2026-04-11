@@ -10,6 +10,7 @@ import {
   BarChart3,
   Settings,
   LogOut,
+  Crown,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { cn } from '../../lib/utils';
@@ -34,6 +35,13 @@ export default function DesktopSidebar() {
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
   const initial = displayName.charAt(0).toUpperCase();
   const email = user?.email || '';
+
+  // Check if user is owner
+  const ownerEmails = ((import.meta.env.VITE_OWNER_EMAILS as string | undefined) || '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  const isOwner = Boolean(email && ownerEmails.includes(email.toLowerCase()));
 
   return (
     <aside className="sticky top-0 h-screen w-60 shrink-0 flex flex-col bg-cream-50 border-r border-cream-200">
@@ -76,6 +84,26 @@ export default function DesktopSidebar() {
             <span>{label}</span>
           </NavLink>
         ))}
+        
+        {/* Owner Dashboard (only for owner) */}
+        {isOwner && (
+          <div className="mt-2 pt-2 border-t border-cream-200">
+            <NavLink
+              to="/owner/dashboard"
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-colors',
+                  isActive
+                    ? 'bg-pastel-lavender text-ink-400 font-semibold'
+                    : 'text-ink-100 hover:bg-cream-100 hover:text-ink-300'
+                )
+              }
+            >
+              <Crown className="w-5 h-5 shrink-0" />
+              <span>Owner Dashboard</span>
+            </NavLink>
+          </div>
+        )}
       </nav>
 
       {/* User section */}

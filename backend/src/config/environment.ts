@@ -19,6 +19,22 @@ export const config = {
 
   // Baileys auth sessions directory
   AUTH_SESSIONS_DIR: process.env.AUTH_SESSIONS_DIR || './auth_sessions_v2',
+
+  // Vapi Voice Agent
+  VAPI_API_KEY: process.env.VAPI_API_KEY || '',
+  VAPI_PHONE_NUMBER_ID: process.env.VAPI_PHONE_NUMBER_ID || '',
+  VAPI_ASSISTANT_ID: process.env.VAPI_ASSISTANT_ID || '',
+  VAPI_WEBHOOK_SECRET: process.env.VAPI_WEBHOOK_SECRET || '',
+
+  // Voice Transcription (Groq primary, OpenAI fallback)
+  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+
+  // Owner/Admin access allowlist
+  OWNER_EMAILS: (process.env.OWNER_EMAILS || '')
+    .split(',')
+    .map(email => email.trim().toLowerCase())
+    .filter(Boolean),
 };
 
 // Validate critical env vars
