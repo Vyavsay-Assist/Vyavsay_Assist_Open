@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { PhoneCall, Clock3, AudioLines, RefreshCw, FileText, PhoneForwarded, PhoneOff } from 'lucide-react';
+import { PhoneCall, Clock3, AudioLines, RefreshCw, FileText, PhoneForwarded, PhoneOff, Phone, User } from 'lucide-react';
+import { motion } from 'framer-motion';
 import client from '../api/client';
 import EmptyState from '../components/ui/EmptyState';
 import PageHeader from '../components/ui/PageHeader';
+import Input from '../components/ui/Input';
+import Button from '../components/ui/Button';
 
 type VoiceCall = {
   id: string;
@@ -74,6 +77,11 @@ const VoiceCalls: React.FC = () => {
   const [search, setSearch] = useState('');
   const [loadingCalls, setLoadingCalls] = useState(true);
   const [loadingActions, setLoadingActions] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('+91');
+  const [customerName, setCustomerName] = useState('');
+  const [calling, setCalling] = useState(false);
+  const [callError, setCallError] = useState('');
+  const [callSuccess, setCallSuccess] = useState('');
 
   const filteredCalls = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -100,6 +108,31 @@ const VoiceCalls: React.FC = () => {
     () => filteredCalls.find((c) => c.id === selectedCallId) || null,
     [filteredCalls, selectedCallId]
   );
+
+  const handleOutboundCall = async () => {
+    if (!phoneNumber || phoneNumber.length < 10) {
+      setCallError('Please enter a valid phone number');
+      return;
+    }
+    setCallError('');
+    setCallSuccess('');
+    setCalling(true);
+    try {
+      const { data } = await client.post('/vapi/calls/outbound', {
+        phoneNumber: phoneNumber.replace(/\s/g, ''),
+        customerName: customerName || undefined,
+      });
+      setCallSuccess(`Call initiated! ID: ${data.callId}`);
+      setPhoneNumber('+91');
+      setCustomerName('');
+      // Refresh calls list
+      loadCalls();
+    } catch (err: any) {
+      setCallError(err.response?.data?.error || 'Failed to start call');
+    } finally {
+      setCalling(false);
+    }
+  };
 
   const loadCalls = async () => {
     setLoadingCalls(true);
@@ -191,6 +224,60 @@ const VoiceCalls: React.FC = () => {
           </button>
         )}
       />
+
+      {/* Make a Call */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-cream-100/60 rounded-[20px] p-5 lg:p-6 mb-6"
+      >
+        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-ink-100 mb-3">
+          Make a Call
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <Input
+            label="Phone Number"
+            color="sky"
+            value={phoneNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+            placeholder="+91 98765 43210"
+            icon={<Phone className="w-4 h-4" />}
+          />
+          <Input
+            label="Customer Name"
+            color="honey"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            placeholder="Optional"
+            icon={<User className="w-4 h-4" />}
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button
+            variant="primary"
+            size="lg"
+            loading={calling}
+            onClick={handleOutboundCall}
+          >
+            <PhoneCall className="w-4 h-4 mr-2" />
+            Start AI Call
+          </Button>
+        </div>
+
+        {callError && (
+          <p className="mt-3 text-sm text-red-500">{callError}</p>
+        )}
+        {callSuccess && (
+          <p className="mt-3 text-sm text-green-600">{callSuccess}</p>
+        )}
+        {calling && (
+          <div className="mt-3 flex items-center gap-2 text-sm text-ink-100">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            Calling {phoneNumber}...
+          </div>
+        )}
+      </motion.div>
 
       <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2.5">
         <input

@@ -184,4 +184,174 @@ export const vapiRoutes: FastifyPluginAsync = async (server: FastifyInstance) =>
       return reply.status(500).send({ error: err.message || 'Internal server error' });
     }
   });
+
+  /**
+   * POST /api/vapi/calls/outbound
+   * Trigger an outbound AI phone call to a customer.
+   */
+  server.post('/calls/outbound', async (request, reply) => {
+    try {
+      const { phoneNumber, customerName } = request.body as { phoneNumber?: string; customerName?: string };
+
+      if (!phoneNumber) {
+        return reply.status(400).send({ error: 'phoneNumber is required' });
+      }
+
+      if (!config.VAPI_API_KEY || !config.VAPI_PHONE_NUMBER_ID) {
+        return reply.status(500).send({ error: 'VAPI is not configured (missing API key or phone number ID)' });
+      }
+
+      // Fetch user's business profile for the AI assistant
+      const { data: user } = await server.supabase
+        .from('wb_users')
+        .select('business_name, industry, services, business_address, google_maps_link')
+        .eq('id', request.userId)
+        .single();
+
+      const businessName = user?.business_name || 'our business';
+      const industry = user?.industry || 'General';
+      const services = Array.isArray(user?.services) ? user.services.join(', ') : 'various products and services';
+      const address = user?.business_address || 'address not configured';
+
+      const systemPrompt = `You are a friendly, professional phone receptionist for ${businessName}${industry ? `, a ${industry} business` : ''}.
+
+Business details:
+- Name: ${businessName}
+- Industry: ${industry}
+- Services/Products: ${services}
+- Address: ${address}
+
+VOICE RULES (critical):
+- Keep every response under 3 sentences. Callers are on the phone, not reading.
+- Speak naturally and warmly. Use conversational language, not robotic phrases.
+- Never say "as an AI" or "I'm a virtual assistant". You are the receptionist.
+- Always confirm details before booking an appointment.
+- If the customer speaks Hindi or Hinglish, respond in the same language naturally.
+- This is an OUTBOUND call — you called the customer. Introduce yourself and the business first.
+
+TOOLS - use them proactively:
+- search_inventory: When a customer asks about any product, price, or availability. NEVER make up prices. Always search first.
+- book_appointment: When a customer wants to schedule a visit, test drive, or meeting.
+- share_location: When a customer asks for directions or address. Ask for their phone number to send via WhatsApp.
+- escalate_to_human: When the customer is upset or you cannot answer their question.
+
+FLOW:
+1. Introduce yourself: "Hi${customerName ? ` ${customerName}` : ''}, this is calling from ${businessName}."
+2. State purpose briefly and ask how you can help.
+3. Listen and use the right tool.
+4. Confirm and end politely.`;
+
+      const toolDefinitions = [
+        {
+          type: 'function',
+          function: {
+            name: 'search_inventory',
+            description: 'Search product inventory by query, budget, or category',
+            parameters: {
+              type: 'object',
+              properties: {
+                query: { type: 'string', description: 'Product search query' },
+                max_budget: { type: 'number', description: 'Maximum budget' },
+                category: { type: 'string', description: 'Product category' },
+              },
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'book_appointment',
+            description: 'Book an appointment for the customer',
+            parameters: {
+              type: 'object',
+              properties: {
+                customer_name: { type: 'string' },
+                customer_phone: { type: 'string' },
+                service: { type: 'string' },
+                date: { type: 'string' },
+                time: { type: 'string' },
+              },
+              required: ['customer_name', 'service'],
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'share_location',
+            description: 'Share business location with customer',
+            parameters: {
+              type: 'object',
+              properties: {
+                customer_phone: { type: 'string' },
+              },
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'escalate_to_human',
+            description: 'Transfer call to human agent',
+            parameters: {
+              type: 'object',
+              properties: {
+                reason: { type: 'string' },
+              },
+            },
+          },
+        },
+      ];
+
+      // Determine webhook URL for VAPI callbacks
+      const webhookUrl = config.FRONTEND_URL.includes('localhost')
+        ? undefined
+        : `${config.FRONTEND_URL.replace(/\/$/, '').replace(':3004', ':3005')}/api/vapi/webhook`;
+
+      const vapiPayload = {
+        phoneNumberId: config.VAPI_PHONE_NUMBER_ID,
+        customer: {
+          number: phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`,
+          name: customerName || undefined,
+        },
+        assistant: {
+          firstMessage: `Hello${customerName ? ` ${customerName}` : ''}! This is a call from ${businessName}. How can I help you today?`,
+          model: {
+            provider: 'openai',
+            model: 'gpt-4o-mini',
+            messages: [{ role: 'system', content: systemPrompt }],
+            tools: toolDefinitions,
+          },
+          voice: { provider: 'openai', voiceId: 'alloy' },
+          serverUrl: webhookUrl,
+          metadata: { userId: request.userId },
+        },
+      };
+
+      console.log(`📞 [Outbound] Initiating call to ${phoneNumber} for user ${(request.userId as string).slice(0, 8)}`);
+
+      const response = await fetch('https://api.vapi.ai/call', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.VAPI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(vapiPayload),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(`❌ [Outbound] VAPI API error:`, response.status, errorBody);
+        return reply.status(response.status).send({ error: 'Failed to initiate call', details: errorBody });
+      }
+
+      const data = await response.json() as any;
+      console.log(`✅ [Outbound] Call initiated: ${data.id} → ${phoneNumber}`);
+
+      return reply.send({ callId: data.id, status: data.status || 'queued' });
+    } catch (err: any) {
+      console.error(`❌ [Outbound] Call failed:`, err.message);
+      return reply.status(500).send({ error: err.message || 'Failed to initiate call' });
+    }
+  });
 };
