@@ -230,9 +230,21 @@ const Dashboard: React.FC = () => {
               const nameMatch = appt.title?.match(/Appointment:\s*(.+?)\s*[\u2014\u2013-]\s*/);
               const serviceMatch = appt.title?.match(/[\u2014\u2013-]\s*(.+)$/);
               const customerName = nameMatch?.[1] || 'Customer';
-              const service = serviceMatch?.[1] || 'Appointment';
+              const service = (serviceMatch?.[1] || 'Appointment').replace(/\s+at\s+\d{1,2}:\d{2}\s*[AP]M$/i, '').trim();
               const dayAbbr = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][apptDate.getDay()];
-              const timeStr = apptDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+              // Use appointment_time if available, otherwise extract from title
+              let timeStr = '';
+              if (appt.appointment_time) {
+                const d = new Date(appt.appointment_time);
+                const istH = (d.getUTCHours() + 5 + Math.floor((d.getUTCMinutes() + 30) / 60)) % 24;
+                const istM = (d.getUTCMinutes() + 30) % 60;
+                const h12 = istH === 0 ? 12 : istH > 12 ? istH - 12 : istH;
+                const ampm = istH >= 12 ? 'PM' : 'AM';
+                timeStr = `${h12}:${String(istM).padStart(2, '0')} ${ampm}`;
+              } else {
+                const titleTimeMatch = appt.title?.match(/at\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
+                timeStr = titleTimeMatch ? titleTimeMatch[1] : '';
+              }
 
               return (
                 <button
