@@ -318,13 +318,23 @@ const Appointments: React.FC = () => {
               </p>
               <div className="grid grid-cols-3 gap-1.5">
                 {TIME_SLOTS.map(slot => {
+                  // Normalize slot for comparison: "03:00 PM" → parse hours/minutes
+                  const slotMatch = slot.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                  const slotHour24 = slotMatch ? (slotMatch[3].toUpperCase() === 'PM' && parseInt(slotMatch[1]) !== 12 ? parseInt(slotMatch[1]) + 12 : slotMatch[3].toUpperCase() === 'AM' && parseInt(slotMatch[1]) === 12 ? 0 : parseInt(slotMatch[1])) : -1;
+                  const slotMin = slotMatch ? parseInt(slotMatch[2]) : -1;
+
                   const isBooked = selectedDayAppts.some(a => {
                     if (a.appointment_time) {
-                      const t = new Date(a.appointment_time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-                      return t.toLowerCase() === slot.toLowerCase();
+                      const d = new Date(a.appointment_time);
+                      // Get IST hours: UTC + 5:30
+                      const istH = (d.getUTCHours() + 5 + Math.floor((d.getUTCMinutes() + 30) / 60)) % 24;
+                      const istM = (d.getUTCMinutes() + 30) % 60;
+                      return istH === slotHour24 && istM === slotMin;
                     }
-                    const titleTime = a.title.match(/(\d{1,2}:\d{2}\s*[AP]M)/i);
-                    return titleTime && titleTime[1].toLowerCase() === slot.toLowerCase();
+                    const titleTime = a.title.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+                    if (!titleTime) return false;
+                    const tH = titleTime[3].toUpperCase() === 'PM' && parseInt(titleTime[1]) !== 12 ? parseInt(titleTime[1]) + 12 : titleTime[3].toUpperCase() === 'AM' && parseInt(titleTime[1]) === 12 ? 0 : parseInt(titleTime[1]);
+                    return tH === slotHour24 && parseInt(titleTime[2]) === slotMin;
                   });
                   return (
                     <button
@@ -361,9 +371,15 @@ const Appointments: React.FC = () => {
                     const isActiveToday = !a.is_completed && new Date(a.due_date!).toDateString() === today.toDateString();
                     const timeMatch = a.title.match(/at\s+(\d{1,2}:\d{2}\s*[AP]M)/i);
                     const extractedTime = timeMatch ? timeMatch[1] : null;
-                    const displayTime = a.appointment_time
-                      ? new Date(a.appointment_time).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
-                      : extractedTime;
+                    let displayTime = extractedTime;
+                    if (a.appointment_time) {
+                      const d = new Date(a.appointment_time);
+                      const istH = (d.getUTCHours() + 5 + Math.floor((d.getUTCMinutes() + 30) / 60)) % 24;
+                      const istM = (d.getUTCMinutes() + 30) % 60;
+                      const h12 = istH === 0 ? 12 : istH > 12 ? istH - 12 : istH;
+                      const ampm = istH >= 12 ? 'PM' : 'AM';
+                      displayTime = `${h12}:${String(istM).padStart(2, '0')} ${ampm}`;
+                    }
                     return (
                       <div key={a.id} className={`flex items-center gap-3 p-4 rounded-2xl transition-all border ${
                         a.is_completed ? 'opacity-50 border-cream-200' :
