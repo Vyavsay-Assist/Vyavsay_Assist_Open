@@ -317,25 +317,8 @@ const AIBrain: React.FC = () => {
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
               Sync with Google Sheets
             </Button>
-            <Button
-              variant="soft"
-              softColor="sky"
-              size="sm"
-              loading={syncing}
-              onClick={() => handleSheetSync('export-to-sheet')}
-            >
-              Push to Sheet
-            </Button>
-            <Button
-              variant="soft"
-              softColor="honey"
-              size="sm"
-              loading={syncing}
-              onClick={() => handleSheetSync('import-from-sheet')}
-            >
-              Pull from Sheet
-            </Button>
           </div>
+          <p className="text-[10px] text-ink-50 mt-1">Auto-syncs every 2 minutes. Click to sync now.</p>
           {syncMsg && (
             <p className={`text-xs mt-2 ${syncMsg.includes('fail') ? 'text-red-500' : 'text-soft-sage'}`}>
               {syncMsg}

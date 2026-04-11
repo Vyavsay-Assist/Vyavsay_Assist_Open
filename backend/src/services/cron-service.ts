@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { baileysAdapter } from './baileys-adapter.js';
 import { sessionManager } from './session-manager.js';
+import { SheetsSyncService } from './sheets-sync-service.js';
 
 /**
  * CronService — handles automated SaaS operations.
@@ -22,7 +23,33 @@ export class CronService {
       this.processFollowUps().catch(err => console.error('[Cron] Follow-ups failed:', err.message));
     });
 
-    console.log('📅 Cron Service Initialized (Daily Reports & Follow-ups)');
+    // 3. Google Sheets auto-sync every 2 minutes
+    cron.schedule('*/2 * * * *', () => {
+      this.autoSyncSheets().catch(err => console.error('[Cron] Sheets sync failed:', err.message));
+    });
+
+    console.log('📅 Cron Service Initialized (Daily Reports, Follow-ups & Sheets Sync)');
+  }
+
+  /** Auto-sync inventory with Google Sheets */
+  private async autoSyncSheets(): Promise<void> {
+    try {
+      const sheetsSync = new SheetsSyncService();
+      const { data: users } = await this.supabase.from('wb_users').select('id').limit(5);
+      if (!users?.length) return;
+
+      for (const user of users) {
+        try {
+          await sheetsSync.syncBidirectional(this.supabase, user.id);
+        } catch (err: any) {
+          // Skip silently if Google Sheets not configured for this user
+          if (err.message?.includes('not configured')) continue;
+          console.error(`[Cron] Sheets sync failed for ${user.id.slice(0, 8)}:`, err.message);
+        }
+      }
+    } catch (err: any) {
+      console.error('[Cron] Sheets auto-sync error:', err.message);
+    }
   }
 
   /** Send a summary to every business owner */
