@@ -1,5 +1,7 @@
 # 🚀 Vyavsay — AI WhatsApp Sales Copilot
 
+🌐 **Live Demo:** [https://vyavsayassist.app/](https://vyavsayassist.app/)
+
 A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handles customer inquiries, scores leads, extracts tasks, and schedules appointments — all through WhatsApp.
 
 ## 🏗️ Architecture
