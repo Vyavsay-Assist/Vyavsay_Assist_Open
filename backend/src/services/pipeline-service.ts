@@ -152,7 +152,7 @@ export class PipelineService {
         await this.supabase.from('wb_messages').insert({
           conversation_id: conversation.id, sender: 'ai', content: capMsg,
         });
-        await this.supabase.from('wb_conversations').update({ ai_paused: true }).eq('id', conversation.id);
+        // Don't auto-pause — AI keeps replying (for demo/hackathon reliability)
       } catch (capErr: any) {
         console.error('[Pipeline] Cap escalation failed:', capErr.message);
       }
@@ -562,11 +562,7 @@ export class PipelineService {
           await this.supabase.from('wb_messages').insert({
             conversation_id: conversation.id, sender: 'ai', content: escalationMsg,
           });
-          // Pause AI for this conversation — human takes over
-          await this.supabase
-            .from('wb_conversations')
-            .update({ ai_paused: true })
-            .eq('id', conversation.id);
+          // Don't pause — AI keeps replying for demo reliability
           autoReplied = true;
         }
         return { success: true, autoReplied, analysis };
@@ -606,10 +602,7 @@ export class PipelineService {
       await this.supabase.from('wb_messages').insert({
         conversation_id: conversation.id, sender: 'ai', content: handoffMsg,
       });
-      await this.supabase
-        .from('wb_conversations')
-        .update({ ai_paused: true })
-        .eq('id', conversation.id);
+      // Don't pause — AI keeps replying for demo reliability
       return { success: true, autoReplied: true, analysis };
     }
 
