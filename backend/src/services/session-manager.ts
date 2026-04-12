@@ -11,6 +11,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import path from 'path';
 import fs from 'fs';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config/environment.js';
 
 // Handle ESM/CJS default export interop
@@ -35,10 +36,46 @@ export class SessionManager extends EventEmitter {
   private sessions = new Map<string, SessionInfo>();
   private readonly maxReconnectAttempts = 15;
   private readonly logger = pino({ level: 'silent' });
+  private readonly supabase: SupabaseClient | null;
 
   constructor() {
     super();
     this.ensureAuthDir();
+    this.supabase = config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY
+      ? createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY)
+      : null;
+  }
+
+  /** Sync the wb_sessions table to match live connection state. Best-effort: errors are logged but never thrown. */
+  private async syncSessionRow(
+    userId: string,
+    status: 'connected' | 'disconnected',
+    phone?: string,
+  ): Promise<void> {
+    if (!this.supabase) return;
+    try {
+      const { error: delErr } = await this.supabase
+        .from('wb_sessions')
+        .delete()
+        .eq('user_id', userId);
+      if (delErr) {
+        console.error(`⚠️  [${userId.slice(0, 8)}] wb_sessions delete failed: ${delErr.message}`);
+        return;
+      }
+      if (status === 'disconnected') return;
+
+      const { error: insErr } = await this.supabase.from('wb_sessions').insert({
+        user_id: userId,
+        status,
+        phone_number: phone || null,
+        connected_at: new Date().toISOString(),
+      });
+      if (insErr) {
+        console.error(`⚠️  [${userId.slice(0, 8)}] wb_sessions insert failed: ${insErr.message}`);
+      }
+    } catch (err: any) {
+      console.error(`⚠️  [${userId.slice(0, 8)}] wb_sessions sync error: ${err?.message || err}`);
+    }
   }
 
   private ensureAuthDir(): void {
@@ -62,7 +99,11 @@ export class SessionManager extends EventEmitter {
 
     // Close any existing socket
     if (existing?.socket) {
-      try { existing.socket.end(undefined); } catch { /* ignore */ }
+      try {
+        existing.socket.end(undefined);
+      } catch (err: any) {
+        console.error(`⚠️  [${userId.slice(0, 8)}] socket.end() failed: ${err?.message || err}`);
+      }
     }
 
     const sessionInfo: SessionInfo = {
@@ -158,6 +199,9 @@ export class SessionManager extends EventEmitter {
 
       console.log(`✅ [${userId.slice(0, 8)}] WhatsApp connected — ${phoneNumber}`);
       this.emit('connected', userId, phoneNumber);
+
+      // Reflect connected state in DB so dashboards/owner views stay accurate
+      this.syncSessionRow(userId, 'connected', phoneNumber).catch(() => {});
     }
 
     if (connection === 'close') {
@@ -173,6 +217,7 @@ export class SessionManager extends EventEmitter {
         session.reconnectAttempts = 0;
         session.wasEverConnected = false;
         this.emit('logged_out', userId);
+        this.syncSessionRow(userId, 'disconnected').catch(() => {});
       } else if (restartRequired) {
         // WhatsApp wants us to reconnect immediately — don't count as a failure
         console.log(`🔄 [${userId.slice(0, 8)}] Restart required — reconnecting immediately`);
@@ -188,6 +233,7 @@ export class SessionManager extends EventEmitter {
         session.status = 'disconnected';
         console.log(`⛔ [${userId.slice(0, 8)}] Max reconnect attempts — needs re-scan`);
         this.emit('needs_rescan', userId);
+        this.syncSessionRow(userId, 'disconnected').catch(() => {});
       }
     }
   }
@@ -207,19 +253,32 @@ export class SessionManager extends EventEmitter {
   async destroySession(userId: string, removeAuth = false): Promise<void> {
     const session = this.sessions.get(userId);
     if (session?.socket) {
-      try { await session.socket.logout(); } catch {
-        try { session.socket.end(undefined); } catch { /* ignore */ }
+      try {
+        await session.socket.logout();
+      } catch (logoutErr: any) {
+        console.error(`⚠️  [${userId.slice(0, 8)}] socket.logout() failed: ${logoutErr?.message || logoutErr}`);
+        try {
+          session.socket.end(undefined);
+        } catch (endErr: any) {
+          console.error(`⚠️  [${userId.slice(0, 8)}] socket.end() failed: ${endErr?.message || endErr}`);
+        }
       }
     }
     this.sessions.delete(userId);
     if (removeAuth) this.cleanAuthDir(userId);
+    // Await DB sync so HTTP callers observe the final state on response
+    await this.syncSessionRow(userId, 'disconnected');
     console.log(`🗑️ [${userId.slice(0, 8)}] Session destroyed`);
   }
 
   async restartSession(userId: string): Promise<SessionInfo> {
     const session = this.sessions.get(userId);
     if (session?.socket) {
-      try { session.socket.end(undefined); } catch { /* ignore */ }
+      try {
+        session.socket.end(undefined);
+      } catch (err: any) {
+        console.error(`⚠️  [${userId.slice(0, 8)}] socket.end() failed: ${err?.message || err}`);
+      }
     }
     if (session) session.reconnectAttempts = 0;
     await this.connectSocket(userId);
