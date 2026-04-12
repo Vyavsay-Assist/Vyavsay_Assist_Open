@@ -2,6 +2,10 @@
 
 🌐 **Live Demo:** [https://vyavsayassist.app/](https://vyavsayassist.app/)
 
+🔐 **Test Credentials:**
+- **Email:** `loyamahesh11@gmail.com`
+- **Password:** `VyavsayAssist`
+
 A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handles customer inquiries, scores leads, extracts tasks, and schedules appointments — all through WhatsApp.
 
 ## 🏗️ Architecture
