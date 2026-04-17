@@ -30,13 +30,30 @@ const WHISPER_PROMPT = [
 ].join(' ');
 
 /**
- * Transcribe a WhatsApp voice note (OGG/Opus) using Groq Whisper (primary)
+ * Neutral prompt for general-purpose voice capture (no domain bias).
+ * Used by walk-in capture and other multi-vertical flows where car-specific
+ * vocabulary would cause Whisper to hallucinate car words.
+ */
+const NEUTRAL_PROMPT = 'A salesperson in an Indian retail store dictating a customer note. May mix English, Hindi, Hinglish, Marathi.';
+
+export interface TranscribeOptions {
+  /** Override the Whisper prompt. Pass empty string to disable prompting. */
+  prompt?: string;
+}
+
+/**
+ * Transcribe an audio buffer using Groq Whisper (primary)
  * with OpenAI Whisper as fallback.
+ *
+ * Default prompt is car-domain-biased (for the WhatsApp flow). Override
+ * via `options.prompt` for generic / multi-vertical use cases.
  */
 export async function transcribeVoiceNote(
-  audioBuffer: Buffer
+  audioBuffer: Buffer,
+  options: TranscribeOptions = {},
 ): Promise<{ text: string; provider: string }> {
   const file = new File([new Uint8Array(audioBuffer)], 'voice.ogg', { type: 'audio/ogg' });
+  const prompt = options.prompt !== undefined ? options.prompt : WHISPER_PROMPT;
 
   // Try Groq first (free, fast)
   if (config.GROQ_API_KEY) {
@@ -51,7 +68,8 @@ export async function transcribeVoiceNote(
         file,
         model: 'whisper-large-v3',
         response_format: 'text',
-        prompt: WHISPER_PROMPT,
+        ...(prompt ? { prompt } : {}),
+        temperature: 0,
       }) as unknown as string;
 
       console.log(`Transcription success [groq]: ${text.length} chars`);
@@ -73,7 +91,8 @@ export async function transcribeVoiceNote(
         file,
         model: 'whisper-1',
         response_format: 'text',
-        prompt: WHISPER_PROMPT,
+        ...(prompt ? { prompt } : {}),
+        temperature: 0,
       }) as unknown as string;
 
       console.log(`Transcription success [openai]: ${text.length} chars`);
@@ -86,3 +105,5 @@ export async function transcribeVoiceNote(
 
   throw new Error('Transcription failed: no API keys configured (GROQ_API_KEY / OPENAI_API_KEY)');
 }
+
+export { NEUTRAL_PROMPT };

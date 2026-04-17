@@ -391,20 +391,31 @@ const VALID_OUTCOMES = ['interested', 'will_decide', 'purchased', 'not_intereste
  * Extract structured walk-in data from a salesperson's voice transcript.
  * Transcript may mix Hindi, Hinglish, Marathi, English. Returns best-effort
  * structured fields the modal can pre-fill for owner review.
+ *
+ * IMPORTANT: This function is conservative — it returns empty fields rather
+ * than guessing, because Whisper sometimes hallucinates plausible-sounding
+ * text from silence/noise and we must not pollute the form with garbage.
  */
 export async function extractWalkInFromTranscript(transcript: string): Promise<WalkInExtraction> {
-  const system = `You extract structured walk-in customer data from a salesperson's voice note.
-The salesperson is in an Indian retail showroom (cars, appliances, jewelry, etc.) describing what just happened.
-Transcript may mix Hindi, Hinglish, Marathi, English.
+  const system = `You extract structured walk-in customer data from an Indian salesperson's voice note.
 
-Return ONLY a JSON object with these fields (omit fields you can't infer; do not invent):
-- customer_name: string (just the person's name, no titles)
-- customer_phone: string (10 digits only, no spaces; strip country code prefix like 91)
-- items_mentioned: array of strings (products/services discussed, e.g. ["Fortuner", "Endeavour"])
-- outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up"
-- follow_up_hint: relative time phrase the customer mentioned (e.g. "Sunday", "tomorrow evening", "next week")
-- staff_name: salesperson's own name if they mention themselves
-- notes: short clean summary of what happened (1-2 sentences in English)`;
+CRITICAL RULES — read these first:
+1. NEVER invent or guess data. Only extract what is EXPLICITLY stated.
+2. If the transcript is gibberish, a single isolated word, only product names with no customer context, or clearly the result of a misfired recording — return {"items_mentioned": [], "notes": ""}.
+3. A customer name MUST be a real spoken name, not a product name (e.g. "Fortuner" or "Maruti" are products, not names).
+4. A phone number MUST appear as digits in the transcript. Do not invent.
+5. If unsure about ANY field, leave it out. Empty is better than wrong.
+
+Transcript context: salesperson in an Indian retail store (cars, appliances, jewelry, electronics, real estate, etc.). May mix English, Hindi, Hinglish, Marathi.
+
+Return ONLY a JSON object with these fields (omit fields you can't EXPLICITLY extract):
+- customer_name: string (the person's name as spoken; not a product name)
+- customer_phone: string (10 digits only; strip "91" country prefix)
+- items_mentioned: array of strings (products/services explicitly mentioned)
+- outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up" — only if clearly indicated
+- follow_up_hint: relative time phrase the customer mentioned (e.g. "Sunday", "tomorrow")
+- staff_name: salesperson's own name if they identify themselves
+- notes: 1-2 sentence English summary of what happened. If transcript is unclear, return empty string.`;
 
   try {
     const completion = await openai.chat.completions.create({
