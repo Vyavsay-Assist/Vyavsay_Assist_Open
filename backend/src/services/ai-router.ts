@@ -388,35 +388,58 @@ export interface WalkInExtraction {
 const VALID_OUTCOMES = ['interested', 'will_decide', 'purchased', 'not_interested', 'follow_up'] as const;
 
 /**
+ * Extract a 10-digit Indian mobile from a transcript. Used as a safety net
+ * when GPT misses the phone (digit recognition is sometimes wonky in mixed-
+ * language transcripts).
+ */
+function extractIndianPhoneFromText(text: string): string | undefined {
+  // Strip all non-digit chars and look for runs that match Indian mobile format
+  const digits = text.replace(/[^\d]/g, '');
+  // Look for 10 consecutive digits starting with 6/7/8/9 (Indian mobile prefix)
+  const match10 = digits.match(/[6-9]\d{9}/);
+  if (match10) return match10[0];
+  // Or 12 digits starting with 91 + valid mobile
+  const match12 = digits.match(/91([6-9]\d{9})/);
+  if (match12) return match12[1];
+  return undefined;
+}
+
+/**
  * Extract structured walk-in data from a salesperson's voice transcript.
- * Transcript may mix Hindi, Hinglish, Marathi, English. Returns best-effort
- * structured fields the modal can pre-fill for owner review.
- *
- * IMPORTANT: This function is conservative — it returns empty fields rather
- * than guessing, because Whisper sometimes hallucinates plausible-sounding
- * text from silence/noise and we must not pollute the form with garbage.
+ * Uses few-shot examples (works far better than abstract rules) plus a
+ * regex-based phone fallback for the common case where digits get garbled.
  */
 export async function extractWalkInFromTranscript(transcript: string): Promise<WalkInExtraction> {
   const system = `You extract structured walk-in customer data from an Indian salesperson's voice note.
+The salesperson is in a retail showroom (cars, appliances, jewelry, electronics, etc.).
+Transcript may mix English, Hindi, Hinglish, Marathi.
 
-CRITICAL RULES — read these first:
-1. NEVER invent or guess data. Only extract what is EXPLICITLY stated.
-2. If the transcript is gibberish, a single isolated word, only product names with no customer context, or clearly the result of a misfired recording — return {"items_mentioned": [], "notes": ""}.
-3. A customer name MUST be a real spoken name, not a product name (e.g. "Fortuner" or "Maruti" are products, not names).
-4. A phone number MUST appear as digits in the transcript. Do not invent.
-5. If unsure about ANY field, leave it out. Empty is better than wrong.
-
-Transcript context: salesperson in an Indian retail store (cars, appliances, jewelry, electronics, real estate, etc.). May mix English, Hindi, Hinglish, Marathi.
-
-Return ONLY a JSON object with these fields (omit fields you can't EXPLICITLY extract):
-- customer_name: string (the person's name as spoken; not a product name)
-- customer_phone: string (10 digits only; strip "91" country prefix)
-- items_mentioned: array of strings (products/services explicitly mentioned)
-- outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up" — only if clearly indicated
-- follow_up_hint: relative time phrase the customer mentioned (e.g. "Sunday", "tomorrow")
+Return ONLY a JSON object. Fields:
+- customer_name: person's name (NOT a product name like "Fortuner" or "Faber")
+- customer_phone: 10 digits, strip "91" country prefix
+- items_mentioned: array of products/services discussed
+- outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up"
+- follow_up_hint: relative time phrase ("Sunday", "kal", "tomorrow", "next week")
 - staff_name: salesperson's own name if they identify themselves
-- notes: 1-2 sentence English summary of what happened. If transcript is unclear, return empty string.`;
+- notes: 1-sentence English summary of what happened (always provide this if the transcript has any meaning)
 
+Examples:
+
+Input: "Rajesh Sharma 9876543210, Fortuner chahiye, Sunday tak decide karenge"
+Output: {"customer_name":"Rajesh Sharma","customer_phone":"9876543210","items_mentioned":["Fortuner"],"outcome":"will_decide","follow_up_hint":"Sunday","notes":"Interested in Fortuner; will decide by Sunday."}
+
+Input: "Priya Patel ne chimney pasand kiya, Faber 60cm, kal aayegi husband ke saath"
+Output: {"customer_name":"Priya Patel","items_mentioned":["Faber 60cm chimney"],"outcome":"will_decide","follow_up_hint":"tomorrow","notes":"Liked Faber 60cm chimney; coming back tomorrow with husband."}
+
+Input: "Amit walk in, sirf dekh raha tha, contact bhi nahi diya"
+Output: {"customer_name":"Amit","outcome":"not_interested","notes":"Walk-in just browsing; no contact shared."}
+
+Input: "Customer ne Thar test drive li, 18 lakh budget hai, financing chahiye"
+Output: {"items_mentioned":["Thar"],"outcome":"interested","notes":"Customer test-drove Thar, budget 18L, asking about financing."}
+
+Omit fields you genuinely cannot infer (don't invent data). Always include "notes" with at least a short summary if the transcript has real content.`;
+
+  let raw = '{}';
   try {
     const completion = await openai.chat.completions.create({
       model: MODEL,
@@ -428,18 +451,27 @@ Return ONLY a JSON object with these fields (omit fields you can't EXPLICITLY ex
       temperature: 0.2,
     });
 
-    const raw = completion.choices[0]?.message?.content || '{}';
+    raw = completion.choices[0]?.message?.content || '{}';
+    console.log('[ai-router] walk-in extraction raw response:', raw);
     const parsed = JSON.parse(raw);
 
-    const phoneRaw = parsed.customer_phone ? String(parsed.customer_phone).replace(/\D/g, '') : '';
-    const phone = phoneRaw.length === 12 && phoneRaw.startsWith('91')
-      ? phoneRaw.slice(2)
-      : phoneRaw.length >= 10 ? phoneRaw.slice(-10) : undefined;
+    // Phone: prefer GPT's value, fall back to regex on the transcript
+    let phone: string | undefined;
+    if (parsed.customer_phone) {
+      const phoneRaw = String(parsed.customer_phone).replace(/\D/g, '');
+      if (phoneRaw.length === 12 && phoneRaw.startsWith('91')) phone = phoneRaw.slice(2);
+      else if (phoneRaw.length >= 10) phone = phoneRaw.slice(-10);
+    }
+    if (!phone) phone = extractIndianPhoneFromText(transcript);
 
     const outcome = typeof parsed.outcome === 'string' && (VALID_OUTCOMES as readonly string[]).includes(parsed.outcome)
       ? parsed.outcome as WalkInExtraction['outcome']
       : undefined;
 
+    // CRITICAL: notes stays empty if GPT didn't summarise. Do NOT fall back
+    // to the raw transcript — that's what caused the "AI dumps everything in
+    // notes" bug. The voice route uses notes-emptiness as a signal that
+    // extraction was incomplete.
     return {
       customer_name: parsed.customer_name?.toString().trim() || undefined,
       customer_phone: phone || undefined,
@@ -449,10 +481,16 @@ Return ONLY a JSON object with these fields (omit fields you can't EXPLICITLY ex
       outcome,
       follow_up_hint: parsed.follow_up_hint?.toString().trim() || undefined,
       staff_name: parsed.staff_name?.toString().trim() || undefined,
-      notes: parsed.notes?.toString().trim() || transcript,
+      notes: parsed.notes?.toString().trim() || '',
     };
   } catch (err: any) {
-    console.error('[ai-router] extractWalkInFromTranscript failed:', err.message);
-    return { items_mentioned: [], notes: transcript };
+    console.error('[ai-router] extractWalkInFromTranscript failed:', err.message, 'raw:', raw);
+    // Phone-only fallback so the form still gets at least one useful value
+    const phone = extractIndianPhoneFromText(transcript);
+    return {
+      items_mentioned: [],
+      customer_phone: phone,
+      notes: '',
+    };
   }
 }
