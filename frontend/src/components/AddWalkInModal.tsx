@@ -29,8 +29,27 @@ interface VoicePreview {
   notes?: string;
   items_mentioned?: string[];
   follow_up_hint?: string;
-  quality: 'good' | 'unclear' | 'too_short';
+  quality: 'good' | 'unclear' | 'too_short' | 'low_confidence' | 'hallucination';
 }
+
+/** 8 vertical bars driven by recorder.level (0-100). Quick trust signal. */
+const VolumeBars: React.FC<{ level: number }> = ({ level }) => (
+  <div className="flex items-end gap-1 h-6">
+    {Array.from({ length: 8 }).map((_, i) => {
+      const threshold = (i + 1) * 11;
+      const on = level >= threshold;
+      const height = 8 + i * 2;
+      const color = i < 5 ? 'bg-soft-sage' : i < 7 ? 'bg-soft-honey' : 'bg-soft-rose';
+      return (
+        <span
+          key={i}
+          className={`w-1.5 rounded-sm transition-colors ${on ? color : 'bg-cream-200'}`}
+          style={{ height: `${height}px` }}
+        />
+      );
+    })}
+  </div>
+);
 
 const MIN_RECORDING_MS = 1500;
 
@@ -67,12 +86,14 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
     } else if (recorder.status === 'recording') {
       const recordedMs = recorder.durationMs;
       const blob = await recorder.stop();
-      if (!blob || blob.size < 500) {
-        setVoiceError('Recording was empty. Please tap and speak.');
+      // Hook returns null when the muxer produced a header-only blob (the
+      // MediaRecorder bug we patched). It also sets recorder.error in that case.
+      if (!blob) {
+        setVoiceError(recorder.error || 'Recording failed. Please try again.');
         return;
       }
       if (recordedMs < MIN_RECORDING_MS) {
-        setVoiceError('Too short — please speak for at least 2 seconds.');
+        setVoiceError('Too short — please hold and speak for at least 2 seconds.');
         return;
       }
       await sendForExtraction(blob);
@@ -88,14 +109,23 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
       const form = new FormData();
       form.append('file', file);
 
-      const res = await client.post('/voice/extract-walkin', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Do NOT set Content-Type — let axios + the browser set
+      // "multipart/form-data; boundary=…" with the auto-generated boundary.
+      const res = await client.post('/voice/extract-walkin', form);
 
       const { transcript, extracted, quality } = res.data;
 
-      if (quality === 'too_short' || quality === 'unclear') {
-        setVoiceError("Sorry, didn't catch that clearly. Try again or fill below.");
+      // Layered failure modes from backend (low_confidence / hallucination /
+      // too_short / unclear) — show honest "couldn't catch" UX, never push
+      // garbage into form fields.
+      if (quality !== 'good') {
+        const messages: Record<string, string> = {
+          too_short:       "That was very short — please hold and speak for a few seconds.",
+          unclear:         "Sorry, couldn't catch any clear info. Try again, closer to the phone.",
+          low_confidence:  "Audio was unclear (background noise?). Try somewhere quieter.",
+          hallucination:   "Couldn't hear you properly. Please try again.",
+        };
+        setVoiceError(messages[quality] || "Couldn't catch that. Try again or fill below.");
         setPreview({ transcript: transcript || '', quality });
         return;
       }
@@ -227,14 +257,21 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
                   )}
                 </button>
 
+                {/* Live volume bars — proves the mic is picking up sound */}
+                {isRecording && (
+                  <VolumeBars level={recorder.level} />
+                )}
+
                 <div className="text-center">
                   {extracting ? (
                     <div className="text-[13px] text-ink-200 font-medium">
-                      Sun rahe hain… (Listening to what you said)
+                      Sun rahe hain… (Processing what you said)
                     </div>
                   ) : isRecording ? (
                     <div className="text-[13px] text-ink-200 font-medium">
-                      Speak now — tap red square when done
+                      {recorder.level > 5
+                        ? 'Speak now — tap red square when done'
+                        : "Can't hear you — speak louder or check your mic"}
                     </div>
                   ) : (
                     <>

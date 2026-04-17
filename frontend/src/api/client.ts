@@ -4,11 +4,14 @@ import { supabase } from './supabase';
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || '/api';
 let redirectingToLogin = false;
 
+// NOTE: no global Content-Type. Axios 1.x auto-sets:
+//   - application/json for plain object bodies
+//   - multipart/form-data; boundary=… for FormData (browser sets the boundary)
+//   - text/plain for strings
+// A hardcoded global Content-Type breaks FormData uploads because the boundary
+// is missing and fastify-multipart silently fails to parse the body.
 const client = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
 // Attach Supabase JWT token to every request
