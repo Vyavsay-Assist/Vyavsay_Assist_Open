@@ -6,6 +6,8 @@ import AppShell from './components/layout/AppShell';
 import Dashboard from './pages/Dashboard';
 import Conversations from './pages/Conversations';
 import Leads from './pages/Leads';
+import Customers from './pages/Customers';
+import CustomerDetail from './pages/CustomerDetail';
 import Tasks from './pages/Tasks';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
@@ -56,6 +58,8 @@ const AppContent: React.FC = () => {
         <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
         <Route path="/qr-scanner" element={<ProtectedRoute><QRScanner /></ProtectedRoute>} />
         <Route path="/conversations" element={<ProtectedRoute><Conversations /></ProtectedRoute>} />
+        <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+        <Route path="/customers/:id" element={<ProtectedRoute><CustomerDetail /></ProtectedRoute>} />
         <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
         <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
         <Route path="/appointments" element={<ProtectedRoute><Appointments /></ProtectedRoute>} />

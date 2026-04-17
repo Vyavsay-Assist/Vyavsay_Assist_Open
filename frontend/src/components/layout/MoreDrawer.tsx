@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   QrCode,
+  UserCircle,
   CheckSquare,
   CalendarDays,
   BarChart3,
@@ -17,6 +18,7 @@ interface MoreDrawerProps {
 }
 
 const drawerItems = [
+  { icon: UserCircle, label: 'Customers', path: '/customers' },
   { icon: QrCode, label: 'Connect WhatsApp', path: '/qr-scanner' },
   { icon: CheckSquare, label: 'Tasks', path: '/tasks' },
   { icon: CalendarDays, label: 'Appointments', path: '/appointments' },
