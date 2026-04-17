@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, User, Phone, Tag, Calendar, FileText } from 'lucide-react';
+import { X, User, Phone, Tag, Calendar, FileText, Mic, MicOff, Loader2, Sparkles } from 'lucide-react';
 import client from '../api/client';
+import { useAudioRecorder } from '../hooks/useAudioRecorder';
 
 interface Props {
   onClose: () => void;
@@ -25,6 +26,69 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
   const [followUp, setFollowUp] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [extracting, setExtracting] = useState(false);
+  const [transcript, setTranscript] = useState<string | null>(null);
+  const [extractedHint, setExtractedHint] = useState<string | null>(null);
+
+  const recorder = useAudioRecorder(30_000);
+
+  const formatDuration = (ms: number): string => {
+    const s = Math.floor(ms / 1000);
+    return `0:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleMicClick = async () => {
+    setError(null);
+    if (recorder.status === 'idle') {
+      await recorder.start();
+    } else if (recorder.status === 'recording') {
+      const blob = await recorder.stop();
+      if (blob && blob.size > 100) {
+        await sendForExtraction(blob);
+      }
+    }
+  };
+
+  const sendForExtraction = async (blob: Blob) => {
+    setExtracting(true);
+    setError(null);
+    setExtractedHint(null);
+    try {
+      const ext = blob.type.includes('ogg') ? 'ogg' : 'webm';
+      const file = new File([blob], `walkin.${ext}`, { type: blob.type });
+      const form = new FormData();
+      form.append('file', file);
+
+      const res = await client.post('/voice/extract-walkin', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const { transcript: tx, extracted } = res.data;
+      setTranscript(tx);
+
+      // Auto-fill (don't overwrite if user already typed something)
+      if (extracted.customer_name && !name) setName(extracted.customer_name);
+      if (extracted.customer_phone && !phone) setPhone(extracted.customer_phone);
+      if (extracted.staff_name && !staffName) setStaffName(extracted.staff_name);
+      if (extracted.outcome) setOutcome(extracted.outcome);
+      if (extracted.notes && !notes) setNotes(extracted.notes);
+
+      const hints: string[] = [];
+      if (extracted.items_mentioned?.length) {
+        hints.push(`Items: ${extracted.items_mentioned.join(', ')}`);
+      }
+      if (extracted.follow_up_hint) {
+        hints.push(`Follow-up mentioned: "${extracted.follow_up_hint}"`);
+      }
+      setExtractedHint(hints.length ? hints.join(' · ') : null);
+    } catch (err: any) {
+      console.error('Voice extraction failed', err);
+      setError(err.response?.data?.error || 'Could not process voice. Try again or fill manually.');
+    } finally {
+      setExtracting(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!name && !phone) {
@@ -51,6 +115,9 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
     }
   };
 
+  const isRecording = recorder.status === 'recording';
+  const isStopping = recorder.status === 'stopping';
+
   return (
     <AnimatePresence>
       <motion.div
@@ -75,14 +142,72 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             </button>
           </div>
 
-          {/* Name */}
+          {/* Voice capture — primary path */}
+          <div className="mb-4 bg-pastel-lavender/30 rounded-2xl p-4 border border-soft-lavender/20">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] uppercase tracking-wide font-medium text-soft-lavender flex items-center gap-1">
+                <Sparkles size={12} /> Voice Capture
+              </div>
+              {isRecording && (
+                <div className="text-[11px] text-soft-rose font-mono">
+                  ● {formatDuration(recorder.durationMs)}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleMicClick}
+                disabled={extracting || isStopping}
+                className={`shrink-0 w-14 h-14 rounded-full flex items-center justify-center transition shadow-sm ${
+                  isRecording
+                    ? 'bg-soft-rose text-cream-50 animate-pulse'
+                    : extracting
+                    ? 'bg-cream-200 text-ink-50'
+                    : 'bg-soft-lavender text-cream-50 hover:opacity-90'
+                }`}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              >
+                {extracting ? (
+                  <Loader2 size={22} className="animate-spin" />
+                ) : isRecording ? (
+                  <MicOff size={22} />
+                ) : (
+                  <Mic size={22} />
+                )}
+              </button>
+
+              <div className="flex-1 text-[12px] text-ink-100 leading-tight">
+                {extracting ? (
+                  <span>Transcribing & extracting…</span>
+                ) : isRecording ? (
+                  <span>Speak now — name, phone, what they wanted, follow-up. Tap again to stop.</span>
+                ) : transcript ? (
+                  <span className="italic">"{transcript}"</span>
+                ) : (
+                  <span>Tap to record up to 30 seconds. Hindi/Marathi/English all work.</span>
+                )}
+              </div>
+            </div>
+
+            {extractedHint && (
+              <div className="mt-3 text-[11px] text-soft-lavender bg-cream-50 rounded-lg px-3 py-2 border border-soft-lavender/10">
+                ✨ {extractedHint}
+              </div>
+            )}
+
+            {recorder.error && (
+              <div className="mt-2 text-[11px] text-soft-rose">{recorder.error}</div>
+            )}
+          </div>
+
+          {/* Manual fields below */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
             Customer Name
           </label>
           <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
             <User size={16} className="text-ink-50" />
             <input
-              autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Rajesh Sharma"
@@ -90,7 +215,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             />
           </div>
 
-          {/* Phone */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
             Phone Number
           </label>
@@ -105,7 +229,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             />
           </div>
 
-          {/* Staff */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
             Handled By
           </label>
@@ -119,7 +242,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             />
           </div>
 
-          {/* Outcome */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-2 mt-4 font-medium">
             Outcome
           </label>
@@ -139,7 +261,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             ))}
           </div>
 
-          {/* Notes */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-4 font-medium">
             Notes
           </label>
@@ -154,7 +275,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             />
           </div>
 
-          {/* Follow-up */}
           <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
             Follow-Up Date (optional)
           </label>
@@ -174,7 +294,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             </div>
           )}
 
-          {/* Actions */}
           <div className="flex gap-2 mt-5">
             <button
               onClick={onClose}
@@ -184,7 +303,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             </button>
             <button
               onClick={handleSubmit}
-              disabled={saving}
+              disabled={saving || isRecording || extracting}
               className="flex-1 py-3 rounded-full text-sm font-medium bg-soft-sage text-cream-50 disabled:opacity-50 hover:opacity-90 transition"
             >
               {saving ? 'Saving…' : 'Save Walk-In'}

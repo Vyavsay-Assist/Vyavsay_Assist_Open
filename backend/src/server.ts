@@ -66,6 +66,9 @@ async function main() {
   const { visitRoutes } = await import('./routes/visit-routes.js');
   await fastify.register(visitRoutes, { prefix: '/api/visits' });
 
+  const { voiceRoutes } = await import('./routes/voice-routes.js');
+  await fastify.register(voiceRoutes, { prefix: '/api/voice' });
+
   // Voice agent webhook (Vapi) — no auth required, Vapi calls directly
   const { vapiRoutes } = await import('./routes/vapi-routes.js');
   await fastify.register(vapiRoutes, { prefix: '/api/vapi' });

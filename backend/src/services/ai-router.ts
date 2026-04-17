@@ -370,3 +370,78 @@ Return JSON with these fields:
     return fallback;
   }
 }
+
+// ─────────────────────────────────────────
+// Walk-In Voice Extraction (Phase 1.2)
+// ─────────────────────────────────────────
+
+export interface WalkInExtraction {
+  customer_name?: string;
+  customer_phone?: string;
+  items_mentioned: string[];
+  outcome?: 'interested' | 'will_decide' | 'purchased' | 'not_interested' | 'follow_up';
+  follow_up_hint?: string;
+  staff_name?: string;
+  notes: string;
+}
+
+const VALID_OUTCOMES = ['interested', 'will_decide', 'purchased', 'not_interested', 'follow_up'] as const;
+
+/**
+ * Extract structured walk-in data from a salesperson's voice transcript.
+ * Transcript may mix Hindi, Hinglish, Marathi, English. Returns best-effort
+ * structured fields the modal can pre-fill for owner review.
+ */
+export async function extractWalkInFromTranscript(transcript: string): Promise<WalkInExtraction> {
+  const system = `You extract structured walk-in customer data from a salesperson's voice note.
+The salesperson is in an Indian retail showroom (cars, appliances, jewelry, etc.) describing what just happened.
+Transcript may mix Hindi, Hinglish, Marathi, English.
+
+Return ONLY a JSON object with these fields (omit fields you can't infer; do not invent):
+- customer_name: string (just the person's name, no titles)
+- customer_phone: string (10 digits only, no spaces; strip country code prefix like 91)
+- items_mentioned: array of strings (products/services discussed, e.g. ["Fortuner", "Endeavour"])
+- outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up"
+- follow_up_hint: relative time phrase the customer mentioned (e.g. "Sunday", "tomorrow evening", "next week")
+- staff_name: salesperson's own name if they mention themselves
+- notes: short clean summary of what happened (1-2 sentences in English)`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: transcript },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
+    });
+
+    const raw = completion.choices[0]?.message?.content || '{}';
+    const parsed = JSON.parse(raw);
+
+    const phoneRaw = parsed.customer_phone ? String(parsed.customer_phone).replace(/\D/g, '') : '';
+    const phone = phoneRaw.length === 12 && phoneRaw.startsWith('91')
+      ? phoneRaw.slice(2)
+      : phoneRaw.length >= 10 ? phoneRaw.slice(-10) : undefined;
+
+    const outcome = typeof parsed.outcome === 'string' && (VALID_OUTCOMES as readonly string[]).includes(parsed.outcome)
+      ? parsed.outcome as WalkInExtraction['outcome']
+      : undefined;
+
+    return {
+      customer_name: parsed.customer_name?.toString().trim() || undefined,
+      customer_phone: phone || undefined,
+      items_mentioned: Array.isArray(parsed.items_mentioned)
+        ? parsed.items_mentioned.map((s: any) => String(s)).filter(Boolean)
+        : [],
+      outcome,
+      follow_up_hint: parsed.follow_up_hint?.toString().trim() || undefined,
+      staff_name: parsed.staff_name?.toString().trim() || undefined,
+      notes: parsed.notes?.toString().trim() || transcript,
+    };
+  } catch (err: any) {
+    console.error('[ai-router] extractWalkInFromTranscript failed:', err.message);
+    return { items_mentioned: [], notes: transcript };
+  }
+}
