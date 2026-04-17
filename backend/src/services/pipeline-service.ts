@@ -118,6 +118,21 @@ export class PipelineService {
       return { success: false, autoReplied: false, analysis: null };
     }
 
+    // 2.5. Upsert unified customer record and link conversation
+    const customerId = await this.upsertCustomerFromWhatsApp(
+      userId,
+      customerJid,
+      customerName,
+      customerPhone,
+    );
+    if (customerId && !conversation.customer_id) {
+      await this.supabase
+        .from('wb_conversations')
+        .update({ customer_id: customerId })
+        .eq('id', conversation.id);
+      conversation.customer_id = customerId;
+    }
+
     // 3. Store incoming message (annotate source if voice/image)
     const senderLabel = media?.type === 'voice_note' ? 'customer'
       : media?.type === 'image' ? 'customer'
@@ -1252,6 +1267,51 @@ export class PipelineService {
       return `₹${(value / 100000).toFixed(1).replace(/\.0$/, '')} lakh`;
     }
     return `₹${value}`;
+  }
+
+  /**
+   * Upsert a unified `customers` row for the WhatsApp sender.
+   * Returns the customer.id, or null on failure.
+   */
+  private async upsertCustomerFromWhatsApp(
+    userId: string,
+    customerJid: string,
+    customerName: string,
+    customerPhone: string,
+  ): Promise<string | null> {
+    const phoneOrJid = customerPhone || customerJid;
+    if (!phoneOrJid) return null;
+
+    const { data: existing } = await this.supabase
+      .from('customers')
+      .select('id, full_name')
+      .eq('user_id', userId)
+      .eq('primary_phone', phoneOrJid)
+      .maybeSingle();
+
+    if (existing) {
+      const updates: any = { last_activity_at: new Date().toISOString() };
+      if (customerName && !existing.full_name) updates.full_name = customerName;
+      await this.supabase.from('customers').update(updates).eq('id', existing.id);
+      return existing.id;
+    }
+
+    const { data: created, error } = await this.supabase
+      .from('customers')
+      .insert({
+        user_id: userId,
+        full_name: customerName || 'Unknown',
+        primary_phone: phoneOrJid,
+        first_seen_via: 'whatsapp',
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('[Pipeline] Failed to upsert customer:', error.message);
+      return null;
+    }
+    return created.id;
   }
 }
 
