@@ -410,45 +410,78 @@ function extractIndianPhoneFromText(text: string): string | undefined {
  * regex-based phone fallback for the common case where digits get garbled.
  */
 export async function extractWalkInFromTranscript(transcript: string): Promise<WalkInExtraction> {
-  const system = `You extract structured walk-in customer data from an Indian salesperson's voice note.
-The salesperson is in a retail showroom (cars, appliances, jewelry, electronics, etc.).
-Transcript may mix English, Hindi, Hinglish, Marathi.
+  const system = `You extract structured walk-in customer data from an Indian salesperson's voice note (cars, appliances, jewelry, electronics, etc.). Transcripts mix English, Hindi, Hinglish, Marathi.
 
-Return ONLY a JSON object. Fields:
+Return a JSON object with these keys (omit any you genuinely cannot infer; never invent data):
 - customer_name: person's name (NOT a product name like "Fortuner" or "Faber")
-- customer_phone: 10 digits, strip "91" country prefix
+- customer_phone: 10 digits only (strip "91" country prefix)
 - items_mentioned: array of products/services discussed
 - outcome: one of "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up"
-- follow_up_hint: relative time phrase ("Sunday", "kal", "tomorrow", "next week")
-- staff_name: salesperson's own name if they identify themselves
-- notes: 1-sentence English summary of what happened (always provide this if the transcript has any meaning)
+- follow_up_hint: relative time the customer mentioned ("Sunday", "kal", "tomorrow", "next week")
+- staff_name: salesperson's own name if mentioned
+- notes: 1-sentence English summary of what happened (always include if transcript has real content)`;
 
-Examples:
-
-Input: "Rajesh Sharma 9876543210, Fortuner chahiye, Sunday tak decide karenge"
-Output: {"customer_name":"Rajesh Sharma","customer_phone":"9876543210","items_mentioned":["Fortuner"],"outcome":"will_decide","follow_up_hint":"Sunday","notes":"Interested in Fortuner; will decide by Sunday."}
-
-Input: "Priya Patel ne chimney pasand kiya, Faber 60cm, kal aayegi husband ke saath"
-Output: {"customer_name":"Priya Patel","items_mentioned":["Faber 60cm chimney"],"outcome":"will_decide","follow_up_hint":"tomorrow","notes":"Liked Faber 60cm chimney; coming back tomorrow with husband."}
-
-Input: "Amit walk in, sirf dekh raha tha, contact bhi nahi diya"
-Output: {"customer_name":"Amit","outcome":"not_interested","notes":"Walk-in just browsing; no contact shared."}
-
-Input: "Customer ne Thar test drive li, 18 lakh budget hai, financing chahiye"
-Output: {"items_mentioned":["Thar"],"outcome":"interested","notes":"Customer test-drove Thar, budget 18L, asking about financing."}
-
-Omit fields you genuinely cannot infer (don't invent data). Always include "notes" with at least a short summary if the transcript has real content.`;
+  // Few-shot via proper user/assistant message pairs — the model handles
+  // this far more reliably than examples embedded in the system prompt.
+  const fewShot: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    {
+      role: 'user',
+      content: 'Rajesh Sharma 9876543210, Fortuner chahiye, Sunday tak decide karenge',
+    },
+    {
+      role: 'assistant',
+      content: JSON.stringify({
+        customer_name: 'Rajesh Sharma',
+        customer_phone: '9876543210',
+        items_mentioned: ['Fortuner'],
+        outcome: 'will_decide',
+        follow_up_hint: 'Sunday',
+        notes: 'Interested in Fortuner; will decide by Sunday.',
+      }),
+    },
+    {
+      role: 'user',
+      content: 'Priya Patel ne chimney pasand kiya, Faber 60cm, kal aayegi husband ke saath',
+    },
+    {
+      role: 'assistant',
+      content: JSON.stringify({
+        customer_name: 'Priya Patel',
+        items_mentioned: ['Faber 60cm chimney'],
+        outcome: 'will_decide',
+        follow_up_hint: 'tomorrow',
+        notes: 'Liked Faber 60cm chimney; coming back tomorrow with husband.',
+      }),
+    },
+    {
+      role: 'user',
+      content: 'Customer ne Thar test drive li, 18 lakh budget, financing chahiye, naam Amit Kumar phone 8765432190',
+    },
+    {
+      role: 'assistant',
+      content: JSON.stringify({
+        customer_name: 'Amit Kumar',
+        customer_phone: '8765432190',
+        items_mentioned: ['Thar'],
+        outcome: 'interested',
+        notes: 'Test-drove Thar, budget ₹18L, asking about financing.',
+      }),
+    },
+  ];
 
   let raw = '{}';
   try {
+    console.log('[ai-router] walk-in extraction starting, transcript:', JSON.stringify(transcript));
     const completion = await openai.chat.completions.create({
       model: MODEL,
       messages: [
         { role: 'system', content: system },
+        ...fewShot,
         { role: 'user', content: transcript },
       ],
       response_format: { type: 'json_object' },
       temperature: 0.2,
+      max_tokens: 400,
     });
 
     raw = completion.choices[0]?.message?.content || '{}';

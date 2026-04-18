@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, User, Phone, Tag, Calendar, FileText,
-  Mic, Square, Loader2, Sparkles, Check, RotateCcw,
+  Mic, Square, Loader2, Sparkles, Check, RotateCcw, ChevronDown, Keyboard,
 } from 'lucide-react';
 import client from '../api/client';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
@@ -12,12 +12,17 @@ interface Props {
   onSaved: (customerId: string) => void;
 }
 
-const OUTCOMES = [
-  { value: 'interested',     label: '👀 Interested' },
-  { value: 'will_decide',    label: '🤔 Will Decide' },
-  { value: 'purchased',      label: '✅ Purchased' },
-  { value: 'not_interested', label: '❌ Not Interested' },
-  { value: 'follow_up',      label: '⏰ Follow-Up Later' },
+/** Simple 3-button interest level (mapped to backend outcome enum). */
+const INTEREST_OPTIONS = [
+  { value: 'interested',     label: '🔥 Hot',  hint: 'Wants to buy soon' },
+  { value: 'will_decide',    label: '🌡️ Warm', hint: 'Thinking about it' },
+  { value: 'not_interested', label: '❄️ Cold', hint: 'Just looking' },
+];
+
+/** Extra outcomes shown only when user opens "More options". */
+const EXTRA_OUTCOMES = [
+  { value: 'purchased', label: '✅ Bought!' },
+  { value: 'follow_up', label: '⏰ Will Follow Up' },
 ];
 
 interface VoicePreview {
@@ -32,13 +37,16 @@ interface VoicePreview {
   quality: 'good' | 'unclear' | 'too_short' | 'low_confidence' | 'hallucination';
 }
 
+const MIN_RECORDING_MS = 1500;
+type Mode = 'voice' | 'manual';
+
 /** 8 vertical bars driven by recorder.level (0-100). Quick trust signal. */
 const VolumeBars: React.FC<{ level: number }> = ({ level }) => (
-  <div className="flex items-end gap-1 h-6">
+  <div className="flex items-end gap-1 h-7">
     {Array.from({ length: 8 }).map((_, i) => {
       const threshold = (i + 1) * 11;
       const on = level >= threshold;
-      const height = 8 + i * 2;
+      const height = 10 + i * 2;
       const color = i < 5 ? 'bg-soft-sage' : i < 7 ? 'bg-soft-honey' : 'bg-soft-rose';
       return (
         <span
@@ -51,9 +59,10 @@ const VolumeBars: React.FC<{ level: number }> = ({ level }) => (
   </div>
 );
 
-const MIN_RECORDING_MS = 1500;
-
 const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
+  const [mode, setMode] = useState<Mode>('voice');
+  const [showMore, setShowMore] = useState(false);
+
   // form fields
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -86,8 +95,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
     } else if (recorder.status === 'recording') {
       const recordedMs = recorder.durationMs;
       const blob = await recorder.stop();
-      // Hook returns null when the muxer produced a header-only blob (the
-      // MediaRecorder bug we patched). It also sets recorder.error in that case.
       if (!blob) {
         setVoiceError(recorder.error || 'Recording failed. Please try again.');
         return;
@@ -109,23 +116,21 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
       const form = new FormData();
       form.append('file', file);
 
-      // Do NOT set Content-Type — let axios + the browser set
-      // "multipart/form-data; boundary=…" with the auto-generated boundary.
       const res = await client.post('/voice/extract-walkin', form);
+
+      // DIAG: visible in browser DevTools
+      console.log('[walkin] extraction response:', res.data);
 
       const { transcript, extracted, quality } = res.data;
 
-      // Layered failure modes from backend (low_confidence / hallucination /
-      // too_short / unclear) — show honest "couldn't catch" UX, never push
-      // garbage into form fields.
       if (quality !== 'good') {
         const messages: Record<string, string> = {
           too_short:       "That was very short — please hold and speak for a few seconds.",
-          unclear:         "Sorry, couldn't catch any clear info. Try again, closer to the phone.",
+          unclear:         "Couldn't catch any clear info. Try again, closer to the phone.",
           low_confidence:  "Audio was unclear (background noise?). Try somewhere quieter.",
           hallucination:   "Couldn't hear you properly. Please try again.",
         };
-        setVoiceError(messages[quality] || "Couldn't catch that. Try again or fill below.");
+        setVoiceError(messages[quality] || "Couldn't catch that. Try again.");
         setPreview({ transcript: transcript || '', quality });
         return;
       }
@@ -143,22 +148,65 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
       });
     } catch (err: any) {
       console.error('Voice extraction failed', err);
-      const msg = err.response?.data?.error || 'Could not process voice. Try again or fill manually.';
-      setVoiceError(msg);
+      setVoiceError(err.response?.data?.error || 'Could not process voice. Try again.');
     } finally {
       setExtracting(false);
     }
   };
 
-  const applyPreview = () => {
+  const applyPreviewAndSave = async () => {
     if (!preview) return;
-    if (preview.customer_name && !name) setName(preview.customer_name);
-    if (preview.customer_phone && !phone) setPhone(preview.customer_phone);
-    if (preview.staff_name && !staffName) setStaffName(preview.staff_name);
+    // Apply to fields
+    const finalName = preview.customer_name || name;
+    const finalPhone = preview.customer_phone || phone;
+    const finalOutcome = preview.outcome || outcome;
+    const finalStaff = preview.staff_name || staffName;
+    // Build notes from extracted summary + items + follow-up hint
+    const noteParts: string[] = [];
+    if (preview.notes) noteParts.push(preview.notes);
+    if (preview.items_mentioned?.length) {
+      noteParts.push(`Items: ${preview.items_mentioned.join(', ')}`);
+    }
+    if (preview.follow_up_hint) {
+      noteParts.push(`Follow-up: ${preview.follow_up_hint}`);
+    }
+    const finalNotes = noteParts.join(' · ') || notes;
+
+    if (!finalName && !finalPhone) {
+      setVoiceError('I need at least a name or phone — try again or type below.');
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await client.post('/visits', {
+        customer_name: finalName || undefined,
+        customer_phone: finalPhone || undefined,
+        staff_name: finalStaff || undefined,
+        outcome: finalOutcome,
+        manual_notes: finalNotes || undefined,
+      });
+      onSaved(res.data.visit.customer_id);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to save');
+      setSaving(false);
+    }
+  };
+
+  const editPreview = () => {
+    if (!preview) return;
+    if (preview.customer_name) setName(preview.customer_name);
+    if (preview.customer_phone) setPhone(preview.customer_phone);
+    if (preview.staff_name) setStaffName(preview.staff_name);
     if (preview.outcome) setOutcome(preview.outcome);
-    if (preview.notes && !notes) setNotes(preview.notes);
+    const noteParts: string[] = [];
+    if (preview.notes) noteParts.push(preview.notes);
+    if (preview.items_mentioned?.length) noteParts.push(`Items: ${preview.items_mentioned.join(', ')}`);
+    if (preview.follow_up_hint) noteParts.push(`Follow-up: ${preview.follow_up_hint}`);
+    if (noteParts.length) setNotes(noteParts.join(' · '));
     setPreview(null);
-    setVoiceError(null);
+    setMode('manual');
   };
 
   const discardPreview = () => {
@@ -166,7 +214,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
     setVoiceError(null);
   };
 
-  const handleSubmit = async () => {
+  const handleManualSubmit = async () => {
     if (!name && !phone) {
       setError('Please add a name or phone number');
       return;
@@ -184,9 +232,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
       });
       onSaved(res.data.visit.customer_id);
     } catch (err: any) {
-      console.error('Failed to save visit', err);
       setError(err.response?.data?.error || 'Failed to save');
-    } finally {
       setSaving(false);
     }
   };
@@ -194,7 +240,6 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
   const isRecording = recorder.status === 'recording';
   const isStopping  = recorder.status === 'stopping';
   const showPreview = preview !== null && preview.quality === 'good';
-  const showFailedHint = preview !== null && preview.quality !== 'good';
 
   return (
     <AnimatePresence>
@@ -220,26 +265,17 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
             </button>
           </div>
 
-          {/* ────────── VOICE CAPTURE — primary ────────── */}
-          {!showPreview && (
-            <div className="mb-4 bg-pastel-lavender/30 rounded-2xl p-4 border border-soft-lavender/20">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[11px] uppercase tracking-wide font-medium text-soft-lavender flex items-center gap-1">
-                  <Sparkles size={12} /> Easy Voice Entry
-                </div>
-                {isRecording && (
-                  <div className="text-[12px] text-soft-rose font-mono font-semibold">
-                    🔴 {formatDuration(recorder.durationMs)}
-                  </div>
-                )}
-              </div>
-
-              {/* Big mic button */}
-              <div className="flex flex-col items-center gap-3 py-2">
+          {/* ════════════════════════════════════════════════ */}
+          {/* MODE: VOICE — big mic, dominant primary action  */}
+          {/* ════════════════════════════════════════════════ */}
+          {mode === 'voice' && !showPreview && (
+            <div className="py-4">
+              <div className="flex flex-col items-center gap-4">
+                {/* Big mic button */}
                 <button
                   onClick={handleMicClick}
                   disabled={extracting || isStopping}
-                  className={`w-20 h-20 rounded-full flex items-center justify-center transition shadow-md ${
+                  className={`w-28 h-28 rounded-full flex items-center justify-center transition shadow-lg ${
                     isRecording
                       ? 'bg-soft-rose text-cream-50 animate-pulse'
                       : extracting
@@ -249,257 +285,330 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                 >
                   {extracting ? (
-                    <Loader2 size={32} className="animate-spin" />
+                    <Loader2 size={44} className="animate-spin" />
                   ) : isRecording ? (
-                    <Square size={28} fill="currentColor" />
+                    <Square size={36} fill="currentColor" />
                   ) : (
-                    <Mic size={32} />
+                    <Mic size={48} />
                   )}
                 </button>
 
-                {/* Live volume bars — proves the mic is picking up sound */}
+                {/* Live volume bars + duration */}
                 {isRecording && (
-                  <VolumeBars level={recorder.level} />
+                  <div className="flex flex-col items-center gap-2">
+                    <VolumeBars level={recorder.level} />
+                    <div className="text-[12px] text-soft-rose font-mono font-semibold">
+                      🔴 {formatDuration(recorder.durationMs)}
+                    </div>
+                  </div>
                 )}
 
+                {/* Status text */}
                 <div className="text-center">
                   {extracting ? (
-                    <div className="text-[13px] text-ink-200 font-medium">
-                      Sun rahe hain… (Processing what you said)
-                    </div>
+                    <>
+                      <div className="text-[16px] text-ink-300 font-semibold">
+                        Sun rahe hain...
+                      </div>
+                      <div className="text-[12px] text-ink-50 mt-1">
+                        Processing what you said
+                      </div>
+                    </>
                   ) : isRecording ? (
-                    <div className="text-[13px] text-ink-200 font-medium">
+                    <div className="text-[14px] text-ink-200 font-medium">
                       {recorder.level > 5
                         ? 'Speak now — tap red square when done'
-                        : "Can't hear you — speak louder or check your mic"}
+                        : "Can't hear you — speak louder or check mic"}
                     </div>
                   ) : (
                     <>
-                      <div className="text-[14px] text-ink-300 font-semibold">
+                      <div className="text-[18px] text-ink-400 font-bold font-display">
                         Tap to Speak
                       </div>
-                      <div className="text-[11px] text-ink-50 mt-0.5">
+                      <div className="text-[12px] text-ink-50 mt-1">
                         Hindi · Marathi · English — all work
                       </div>
                     </>
                   )}
                 </div>
-              </div>
 
-              {/* Tip */}
-              {!isRecording && !extracting && !showFailedHint && (
-                <div className="mt-3 bg-cream-50 rounded-lg px-3 py-2 border border-cream-200">
-                  <div className="text-[10px] uppercase tracking-wide text-ink-50 font-medium mb-1">
-                    Example
-                  </div>
-                  <div className="text-[12px] text-ink-200 italic leading-relaxed">
-                    "Rajesh Sharma, 9876543210, Fortuner chahiye, Sunday tak decide karenge"
-                  </div>
-                </div>
-              )}
-
-              {/* Failed hint */}
-              {showFailedHint && (
-                <div className="mt-3 bg-pastel-honey/40 rounded-lg px-3 py-2.5 border border-soft-honey/20">
-                  <div className="text-[12px] text-ink-300 font-medium mb-1">
-                    🤔 Couldn't catch that clearly
-                  </div>
-                  {preview?.transcript && (
-                    <div className="text-[11px] text-ink-100 italic mb-2">
-                      Heard: "{preview.transcript}"
+                {/* Example */}
+                {!isRecording && !extracting && (
+                  <div className="w-full bg-cream-100 rounded-xl p-3 border border-cream-200 mt-2">
+                    <div className="text-[10px] uppercase tracking-wide text-ink-50 font-medium mb-1">
+                      Example
                     </div>
-                  )}
+                    <div className="text-[13px] text-ink-200 italic leading-relaxed">
+                      "Rajesh Sharma 9876543210, Fortuner chahiye, Sunday tak decide karenge"
+                    </div>
+                  </div>
+                )}
+
+                {/* Failed states */}
+                {voiceError && !isRecording && !extracting && (
+                  <div className="w-full bg-pastel-honey/30 rounded-xl px-3 py-2.5 border border-soft-honey/20">
+                    <div className="text-[12px] text-ink-300">{voiceError}</div>
+                  </div>
+                )}
+
+                {recorder.error && (
+                  <div className="text-[12px] text-soft-rose">
+                    Mic error: {recorder.error}
+                  </div>
+                )}
+
+                {/* Type instead — small escape hatch */}
+                {!isRecording && !extracting && (
                   <button
-                    onClick={discardPreview}
-                    className="text-[11px] text-soft-honey font-semibold underline"
+                    onClick={() => { setMode('manual'); setVoiceError(null); }}
+                    className="mt-2 text-[13px] text-ink-100 hover:text-ink-300 font-medium underline flex items-center gap-1.5 transition"
                   >
-                    Try again or fill below
+                    <Keyboard size={14} /> Type instead
                   </button>
-                </div>
-              )}
-
-              {voiceError && !showFailedHint && (
-                <div className="mt-2 text-[12px] text-soft-rose bg-pastel-rose/30 px-3 py-2 rounded-lg">
-                  {voiceError}
-                </div>
-              )}
-
-              {recorder.error && (
-                <div className="mt-2 text-[11px] text-soft-rose">
-                  Mic error: {recorder.error}
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
 
-          {/* ────────── PREVIEW CARD (after successful extraction) ────────── */}
+          {/* ════════════════════════════════════════════════ */}
+          {/* PREVIEW: after successful extraction              */}
+          {/* ════════════════════════════════════════════════ */}
           {showPreview && preview && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mb-4 bg-pastel-sage/30 rounded-2xl p-4 border border-soft-sage/20"
+              className="py-2"
             >
-              <div className="text-[11px] uppercase tracking-wide font-medium text-soft-sage flex items-center gap-1 mb-2">
-                <Sparkles size={12} /> Here's what I heard
-              </div>
-
-              <div className="bg-cream-50 rounded-lg px-3 py-2 mb-3 border border-cream-200">
-                <div className="text-[10px] uppercase tracking-wide text-ink-50 mb-1">You said</div>
-                <div className="text-[13px] text-ink-300 italic leading-relaxed">
-                  "{preview.transcript}"
+              <div className="bg-pastel-sage/30 rounded-2xl p-4 border border-soft-sage/20 mb-3">
+                <div className="text-[11px] uppercase tracking-wide font-medium text-soft-sage flex items-center gap-1 mb-3">
+                  <Sparkles size={12} /> Here's what I heard
                 </div>
+
+                <div className="bg-cream-50 rounded-lg px-3 py-2 mb-3 border border-cream-200">
+                  <div className="text-[13px] text-ink-300 italic leading-relaxed">
+                    "{preview.transcript}"
+                  </div>
+                </div>
+
+                <ul className="space-y-1.5 text-[13px] text-ink-300">
+                  {preview.customer_name && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Name:</span> <span className="font-semibold">{preview.customer_name}</span></div></li>
+                  )}
+                  {preview.customer_phone && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Phone:</span> <span className="font-semibold">{preview.customer_phone}</span></div></li>
+                  )}
+                  {preview.items_mentioned && preview.items_mentioned.length > 0 && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Wants:</span> <span className="font-semibold">{preview.items_mentioned.join(', ')}</span></div></li>
+                  )}
+                  {preview.outcome && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Status:</span> <span className="font-semibold">{INTEREST_OPTIONS.find(o => o.value === preview.outcome)?.label || EXTRA_OUTCOMES.find(o => o.value === preview.outcome)?.label || preview.outcome}</span></div></li>
+                  )}
+                  {preview.follow_up_hint && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">When:</span> <span className="font-semibold">{preview.follow_up_hint}</span></div></li>
+                  )}
+                  {preview.notes && !preview.customer_name && !preview.customer_phone && (
+                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Note:</span> <span className="font-semibold">{preview.notes}</span></div></li>
+                  )}
+                </ul>
               </div>
 
-              <div className="text-[10px] uppercase tracking-wide text-ink-50 mb-1.5">I'll fill in</div>
-              <ul className="space-y-1 text-[12px] text-ink-300 mb-3">
-                {preview.customer_name && (
-                  <li>• <span className="text-ink-100">Name:</span> <span className="font-medium">{preview.customer_name}</span></li>
-                )}
-                {preview.customer_phone && (
-                  <li>• <span className="text-ink-100">Phone:</span> <span className="font-medium">{preview.customer_phone}</span></li>
-                )}
-                {preview.staff_name && (
-                  <li>• <span className="text-ink-100">Handled by:</span> <span className="font-medium">{preview.staff_name}</span></li>
-                )}
-                {preview.outcome && (
-                  <li>• <span className="text-ink-100">Outcome:</span> <span className="font-medium">{OUTCOMES.find(o => o.value === preview.outcome)?.label || preview.outcome}</span></li>
-                )}
-                {preview.items_mentioned && preview.items_mentioned.length > 0 && (
-                  <li>• <span className="text-ink-100">Items mentioned:</span> <span className="font-medium">{preview.items_mentioned.join(', ')}</span></li>
-                )}
-                {preview.follow_up_hint && (
-                  <li>• <span className="text-ink-100">Follow-up hint:</span> <span className="font-medium">{preview.follow_up_hint}</span></li>
-                )}
-                {preview.notes && (
-                  <li>• <span className="text-ink-100">Notes:</span> <span className="font-medium">{preview.notes}</span></li>
-                )}
-              </ul>
-
+              {/* Actions */}
               <div className="flex gap-2">
                 <button
                   onClick={discardPreview}
-                  className="flex-1 py-2.5 rounded-full text-[13px] font-medium text-ink-200 bg-cream-50 border border-cream-200 hover:bg-cream-100 transition flex items-center justify-center gap-1.5"
+                  className="flex-1 py-3 rounded-full text-[13px] font-medium text-ink-200 bg-cream-100 border border-cream-200 hover:bg-cream-200 transition flex items-center justify-center gap-1.5"
                 >
                   <RotateCcw size={14} /> Try Again
                 </button>
                 <button
-                  onClick={applyPreview}
-                  className="flex-1 py-2.5 rounded-full text-[13px] font-medium bg-soft-sage text-cream-50 hover:opacity-90 transition flex items-center justify-center gap-1.5"
+                  onClick={applyPreviewAndSave}
+                  disabled={saving}
+                  className="flex-1 py-3 rounded-full text-[14px] font-bold bg-soft-sage text-cream-50 hover:opacity-90 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
-                  <Check size={14} /> Looks Good
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  {saving ? 'Saving...' : 'Save'}
                 </button>
               </div>
+
+              <div className="text-center mt-3">
+                <button
+                  onClick={editPreview}
+                  className="text-[12px] text-ink-100 hover:text-ink-300 underline transition"
+                >
+                  Edit details before saving
+                </button>
+              </div>
+
+              {error && (
+                <div className="mt-3 text-xs text-soft-rose bg-pastel-rose/30 px-3 py-2 rounded-lg">
+                  {error}
+                </div>
+              )}
             </motion.div>
           )}
 
-          {/* ────────── MANUAL FIELDS ────────── */}
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
-            Customer Name
-          </label>
-          <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
-            <User size={16} className="text-ink-50" />
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Rajesh Sharma"
-              className="flex-1 bg-transparent outline-none text-sm text-ink-300 placeholder:text-ink-50"
-            />
-          </div>
-
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
-            Phone Number
-          </label>
-          <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
-            <Phone size={16} className="text-ink-50" />
-            <input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
-              placeholder="9876543210"
-              inputMode="numeric"
-              className="flex-1 bg-transparent outline-none text-sm text-ink-300 placeholder:text-ink-50"
-            />
-          </div>
-
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
-            Handled By
-          </label>
-          <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
-            <Tag size={16} className="text-ink-50" />
-            <input
-              value={staffName}
-              onChange={(e) => setStaffName(e.target.value)}
-              placeholder="Sales rep name"
-              className="flex-1 bg-transparent outline-none text-sm text-ink-300 placeholder:text-ink-50"
-            />
-          </div>
-
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-2 mt-4 font-medium">
-            Outcome
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            {OUTCOMES.map((o) => (
+          {/* ════════════════════════════════════════════════ */}
+          {/* MODE: MANUAL — simplified form                    */}
+          {/* ════════════════════════════════════════════════ */}
+          {mode === 'manual' && !showPreview && (
+            <div>
               <button
-                key={o.value}
-                onClick={() => setOutcome(o.value)}
-                className={`text-xs py-2 rounded-xl font-medium border transition ${
-                  outcome === o.value
-                    ? 'bg-ink-300 text-cream-50 border-ink-300'
-                    : 'bg-cream-50 text-ink-100 border-cream-200 hover:bg-cream-100'
-                }`}
+                onClick={() => { setMode('voice'); setError(null); }}
+                className="mb-4 text-[13px] text-soft-lavender hover:text-soft-lavender/80 font-medium flex items-center gap-1.5 transition"
               >
-                {o.label}
+                <Mic size={14} /> Use voice instead (faster)
               </button>
-            ))}
-          </div>
 
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-4 font-medium">
-            Notes
-          </label>
-          <div className="flex items-start gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
-            <FileText size={16} className="text-ink-50 mt-0.5" />
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="What did they want? What did you show?"
-              rows={3}
-              className="flex-1 bg-transparent outline-none text-sm resize-none text-ink-300 placeholder:text-ink-50"
-            />
-          </div>
+              {/* Name */}
+              <label className="block text-[12px] text-ink-200 mb-1 font-medium">
+                Customer's Name
+              </label>
+              <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-3 border border-cream-200 mb-3">
+                <User size={16} className="text-ink-50" />
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Rajesh Sharma"
+                  className="flex-1 bg-transparent outline-none text-[14px] text-ink-300 placeholder:text-ink-50"
+                />
+              </div>
 
-          <label className="block text-[11px] uppercase tracking-wide text-ink-50 mb-1 mt-3 font-medium">
-            Follow-Up Date (optional)
-          </label>
-          <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200">
-            <Calendar size={16} className="text-ink-50" />
-            <input
-              type="datetime-local"
-              value={followUp}
-              onChange={(e) => setFollowUp(e.target.value)}
-              className="flex-1 bg-transparent outline-none text-sm text-ink-300"
-            />
-          </div>
+              {/* Phone */}
+              <label className="block text-[12px] text-ink-200 mb-1 font-medium">
+                Phone Number
+              </label>
+              <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-3 border border-cream-200 mb-3">
+                <Phone size={16} className="text-ink-50" />
+                <input
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
+                  placeholder="9876543210"
+                  inputMode="numeric"
+                  className="flex-1 bg-transparent outline-none text-[14px] text-ink-300 placeholder:text-ink-50"
+                />
+              </div>
 
-          {error && (
-            <div className="mt-3 text-xs text-soft-rose bg-pastel-rose/30 px-3 py-2 rounded-lg">
-              {error}
+              {/* Interest level — 3 simple buttons */}
+              <label className="block text-[12px] text-ink-200 mb-2 font-medium">
+                How interested?
+              </label>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {INTEREST_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    onClick={() => setOutcome(o.value)}
+                    className={`text-[12px] py-3 rounded-xl font-medium border transition ${
+                      outcome === o.value
+                        ? 'bg-ink-300 text-cream-50 border-ink-300'
+                        : 'bg-cream-50 text-ink-200 border-cream-200 hover:bg-cream-100'
+                    }`}
+                    title={o.hint}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Notes */}
+              <label className="block text-[12px] text-ink-200 mb-1 font-medium">
+                Notes <span className="text-ink-50 font-normal">(optional)</span>
+              </label>
+              <div className="flex items-start gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200 mb-3">
+                <FileText size={16} className="text-ink-50 mt-0.5" />
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="What did they want?"
+                  rows={2}
+                  className="flex-1 bg-transparent outline-none text-[14px] resize-none text-ink-300 placeholder:text-ink-50"
+                />
+              </div>
+
+              {/* Add more (collapsible) */}
+              <button
+                onClick={() => setShowMore(!showMore)}
+                className="text-[12px] text-ink-100 hover:text-ink-300 font-medium flex items-center gap-1 mb-2 transition"
+              >
+                <ChevronDown size={14} className={`transition-transform ${showMore ? 'rotate-180' : ''}`} />
+                {showMore ? 'Hide extra options' : 'Add more details'}
+              </button>
+
+              {showMore && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="overflow-hidden"
+                >
+                  {/* Extra outcomes */}
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {EXTRA_OUTCOMES.map((o) => (
+                      <button
+                        key={o.value}
+                        onClick={() => setOutcome(o.value)}
+                        className={`text-[12px] py-2 rounded-xl font-medium border transition ${
+                          outcome === o.value
+                            ? 'bg-ink-300 text-cream-50 border-ink-300'
+                            : 'bg-cream-50 text-ink-200 border-cream-200'
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="block text-[12px] text-ink-200 mb-1 font-medium">
+                    Handled By
+                  </label>
+                  <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200 mb-3">
+                    <Tag size={16} className="text-ink-50" />
+                    <input
+                      value={staffName}
+                      onChange={(e) => setStaffName(e.target.value)}
+                      placeholder="Sales rep name"
+                      className="flex-1 bg-transparent outline-none text-[14px] text-ink-300 placeholder:text-ink-50"
+                    />
+                  </div>
+
+                  <label className="block text-[12px] text-ink-200 mb-1 font-medium">
+                    Follow-Up Date
+                  </label>
+                  <div className="flex items-center gap-2 bg-cream-100 rounded-xl px-3 py-2.5 border border-cream-200 mb-3">
+                    <Calendar size={16} className="text-ink-50" />
+                    <input
+                      type="datetime-local"
+                      value={followUp}
+                      onChange={(e) => setFollowUp(e.target.value)}
+                      className="flex-1 bg-transparent outline-none text-[14px] text-ink-300"
+                    />
+                  </div>
+                </motion.div>
+              )}
+
+              {error && (
+                <div className="mt-2 text-xs text-soft-rose bg-pastel-rose/30 px-3 py-2 rounded-lg">
+                  {error}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2 mt-4">
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-3 rounded-full text-[14px] font-medium text-ink-100 border border-cream-200 hover:bg-cream-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleManualSubmit}
+                  disabled={saving}
+                  className="flex-1 py-3 rounded-full text-[14px] font-bold bg-soft-sage text-cream-50 disabled:opacity-50 hover:opacity-90 transition"
+                >
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
             </div>
           )}
-
-          <div className="flex gap-2 mt-5">
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-full text-sm font-medium text-ink-100 border border-cream-200 hover:bg-cream-100 transition"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={saving || isRecording || extracting}
-              className="flex-1 py-3 rounded-full text-sm font-medium bg-soft-sage text-cream-50 disabled:opacity-50 hover:opacity-90 transition"
-            >
-              {saving ? 'Saving…' : 'Save Walk-In'}
-            </button>
-          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>
