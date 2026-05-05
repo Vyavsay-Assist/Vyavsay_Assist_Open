@@ -18,6 +18,11 @@ import VoiceCalls from './pages/VoiceCalls';
 import OwnerDashboard from './pages/OwnerDashboard';
 import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
+import LandingPage from './pages/landing/LandingPage';
+import PricingPage from './pages/landing/PricingPage';
+import PrivacyPage from './pages/landing/PrivacyPage';
+import TermsPage from './pages/landing/TermsPage';
+import ContactPage from './pages/landing/ContactPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -43,8 +48,14 @@ const AppContent: React.FC = () => {
   if (!user) {
     return (
       <Routes>
+        {/* Public landing pages */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/contact" element={<ContactPage />} />
         <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }
@@ -53,6 +64,10 @@ const AppContent: React.FC = () => {
     <AppShell>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/contact" element={<ContactPage />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />

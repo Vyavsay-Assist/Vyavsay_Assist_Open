@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { CatalogService } from './catalog-service.js';
 import { RagService } from './rag-service.js';
 import { AppointmentService } from './appointment-service.js';
-import { baileysAdapter } from './baileys-adapter.js';
+import { cloudClient as baileysAdapter } from './whatsapp-cloud-client.js';
 
 export class VoiceService {
   private catalog: CatalogService;

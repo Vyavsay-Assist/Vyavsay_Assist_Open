@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { analyzeMessage, generateReply, generateSummary, AnalysisResult, identifyCarFromImage } from './ai-router.js';
 import { RagService } from './rag-service.js';
 import { CatalogService } from './catalog-service.js';
-import { baileysAdapter } from './baileys-adapter.js';
+import { cloudClient as baileysAdapter } from './whatsapp-cloud-client.js';
 import { reminderService } from './reminder-service.js';
 import { AppointmentService } from './appointment-service.js';
 import { createClient } from '@supabase/supabase-js';
