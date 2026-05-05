@@ -49,6 +49,7 @@ export const visitRoutes: FastifyPluginAsync = async (server: FastifyInstance) =
       next_action?: string;
       follow_up_at?: string;
       manual_notes?: string;
+      ai_summary?: string;
     };
 
     try {
@@ -98,7 +99,7 @@ export const visitRoutes: FastifyPluginAsync = async (server: FastifyInstance) =
           visited_at: body.visited_at || new Date().toISOString(),
           duration_minutes: body.duration_minutes,
           staff_name: body.staff_name,
-          items_shown: body.items_shown || [],
+          items_shown: (body.items_shown || []).map(String),
           trial_taken: body.trial_taken || false,
           trial_item_id: body.trial_item_id,
           quoted_amount: body.quoted_amount,
@@ -106,6 +107,7 @@ export const visitRoutes: FastifyPluginAsync = async (server: FastifyInstance) =
           next_action: body.next_action,
           follow_up_at: body.follow_up_at,
           manual_notes: body.manual_notes,
+          ai_summary: body.ai_summary,
         })
         .select()
         .single();
@@ -115,10 +117,28 @@ export const visitRoutes: FastifyPluginAsync = async (server: FastifyInstance) =
         return reply.status(500).send({ error: 'Failed to create visit' });
       }
 
-      await server.supabase
-        .from('customers')
-        .update({ last_activity_at: new Date().toISOString() })
-        .eq('id', customerId);
+      // Update customer: hotness from outcome, tags merged from items, backfill name
+      const outcomeHotness: Record<string, string> = {
+        interested: 'hot', purchased: 'hot',
+        will_decide: 'warm', follow_up: 'warm',
+        not_interested: 'cold',
+      };
+      const custUpdates: Record<string, any> = { last_activity_at: new Date().toISOString() };
+      if (body.outcome && outcomeHotness[body.outcome]) {
+        custUpdates.hotness = outcomeHotness[body.outcome];
+      }
+      const needsFetch = (body.items_shown?.length ?? 0) > 0 || !!body.customer_name;
+      if (needsFetch) {
+        const { data: cust } = await server.supabase
+          .from('customers').select('tags, full_name').eq('id', customerId).maybeSingle();
+        if (body.items_shown?.length) {
+          custUpdates.tags = Array.from(new Set([...(cust?.tags ?? []), ...body.items_shown]));
+        }
+        if (body.customer_name && !cust?.full_name) {
+          custUpdates.full_name = body.customer_name;
+        }
+      }
+      await server.supabase.from('customers').update(custUpdates).eq('id', customerId);
 
       return reply.send({ visit });
     } catch (err: any) {

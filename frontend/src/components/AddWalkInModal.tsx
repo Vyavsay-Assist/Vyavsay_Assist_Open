@@ -79,6 +79,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
   const [extracting, setExtracting] = useState(false);
   const [preview, setPreview] = useState<VoicePreview | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [previewName, setPreviewName] = useState('');
 
   const recorder = useAudioRecorder(30_000);
 
@@ -146,6 +147,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
         follow_up_hint: extracted.follow_up_hint,
         quality: 'good',
       });
+      setPreviewName(extracted.customer_name || '');
     } catch (err: any) {
       console.error('Voice extraction failed', err);
       setVoiceError(err.response?.data?.error || 'Could not process voice. Try again.');
@@ -156,22 +158,10 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
 
   const applyPreviewAndSave = async () => {
     if (!preview) return;
-    // Apply to fields
-    const finalName = preview.customer_name || name;
+    const finalName = previewName.trim() || name;
     const finalPhone = preview.customer_phone || phone;
     const finalOutcome = preview.outcome || outcome;
     const finalStaff = preview.staff_name || staffName;
-    // Build notes from extracted summary + items + follow-up hint
-    const noteParts: string[] = [];
-    if (preview.notes) noteParts.push(preview.notes);
-    if (preview.items_mentioned?.length) {
-      noteParts.push(`Items: ${preview.items_mentioned.join(', ')}`);
-    }
-    if (preview.follow_up_hint) {
-      noteParts.push(`Follow-up: ${preview.follow_up_hint}`);
-    }
-    const finalNotes = noteParts.join(' · ') || notes;
-
     if (!finalName && !finalPhone) {
       setVoiceError('I need at least a name or phone — try again or type below.');
       return;
@@ -180,12 +170,16 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
     setSaving(true);
     setError(null);
     try {
+      // manual_notes = raw voice transcript (always saved so voice data is never lost)
+      // ai_summary   = GPT-generated 1-sentence summary (saved separately when available)
       const res = await client.post('/visits', {
         customer_name: finalName || undefined,
         customer_phone: finalPhone || undefined,
         staff_name: finalStaff || undefined,
         outcome: finalOutcome,
-        manual_notes: finalNotes || undefined,
+        items_shown: preview.items_mentioned?.length ? preview.items_mentioned : undefined,
+        manual_notes: preview.transcript || undefined,
+        ai_summary: preview.notes || undefined,
       });
       onSaved(res.data.visit.customer_id);
     } catch (err: any) {
@@ -390,10 +384,25 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
                   </div>
                 </div>
 
+                {/* Editable name — always shown, pre-filled from voice if captured */}
+                <div className="mb-3">
+                  <label className={`text-[10px] uppercase tracking-wide font-medium block mb-1 ${previewName ? 'text-soft-sage' : 'text-soft-rose'}`}>
+                    {previewName ? '✓ Customer\'s Name' : '⚠ Type customer name (not heard)'}
+                  </label>
+                  <input
+                    value={previewName}
+                    onChange={e => setPreviewName(e.target.value)}
+                    placeholder="e.g. Rajesh Sharma"
+                    autoFocus={!previewName}
+                    className={`w-full border rounded-xl px-3 py-2.5 text-[14px] text-ink-300 font-semibold placeholder:text-ink-50 placeholder:font-normal outline-none focus:ring-2 transition ${
+                      previewName
+                        ? 'bg-cream-50 border-cream-200 focus:ring-soft-sage/30'
+                        : 'bg-pastel-rose/20 border-soft-rose/40 focus:ring-soft-rose/30'
+                    }`}
+                  />
+                </div>
+
                 <ul className="space-y-1.5 text-[13px] text-ink-300">
-                  {preview.customer_name && (
-                    <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Name:</span> <span className="font-semibold">{preview.customer_name}</span></div></li>
-                  )}
                   {preview.customer_phone && (
                     <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Phone:</span> <span className="font-semibold">{preview.customer_phone}</span></div></li>
                   )}
@@ -406,7 +415,7 @@ const AddWalkInModal: React.FC<Props> = ({ onClose, onSaved }) => {
                   {preview.follow_up_hint && (
                     <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">When:</span> <span className="font-semibold">{preview.follow_up_hint}</span></div></li>
                   )}
-                  {preview.notes && !preview.customer_name && !preview.customer_phone && (
+                  {preview.notes && (
                     <li className="flex gap-2"><Check size={14} className="text-soft-sage shrink-0 mt-0.5" /><div><span className="text-ink-100">Note:</span> <span className="font-semibold">{preview.notes}</span></div></li>
                   )}
                 </ul>
