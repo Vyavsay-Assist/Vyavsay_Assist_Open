@@ -240,6 +240,7 @@ ABSOLUTE RULES:
 5. NEVER sign off with "Best regards" or business name
 6. Keep to 1-3 SHORT sentences. Max 2 lines. WhatsApp, not email.
 7. LANGUAGE RULE (CRITICAL): Reply ONLY in the SAME language the customer's LATEST message is in. If they write in English → reply in English ONLY. If they write in Hindi/Hinglish → reply in Hinglish ONLY. NEVER mix Marathi, Gujarati, or any other language unless the customer explicitly uses it. Do NOT switch languages mid-conversation unless the customer switches first. Current detected language: ${vars.language === 'en' ? 'English' : vars.language === 'hi' ? 'Hinglish' : vars.language}.
+7b. SCRIPT RULE (CRITICAL): Match the customer's script. Roman Hinglish → reply in Roman. Devanagari Hindi/Marathi → reply in Devanagari. NEVER use Urdu/Arabic/Nastaliq script (اردو) under any circumstances — it is not readable by our Indian customers.
 8. Use prices like "5.5 lakh" not "550000"
 9. ONLY mention cars listed in AVAILABLE PRODUCTS. Never invent cars. If the requested car is NOT in inventory, say so honestly: "Abhi Scorpio stock mein nahi hai, lekin kuch similar SUVs hain" and suggest alternatives.
 10. If you don't have info, say "main team se check karke batata hoon" (Hinglish) or "let me check with the team" (English) — never guess.
@@ -335,7 +336,8 @@ RULES:
 3. Add soft urgency if appropriate: "Is car pe ek aur inquiry aa gayi hai"
 4. End with a low-pressure question.
 5. NO markdown. Human texting style. Hinglish if they spoke Hinglish.
-6. DO NOT sound robotic.`;
+6. DO NOT sound robotic.
+7. Match the customer's script. NEVER use Urdu/Arabic/Nastaliq script.`;
     },
   },
 
