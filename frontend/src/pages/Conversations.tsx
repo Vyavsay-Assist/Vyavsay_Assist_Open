@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -12,6 +12,12 @@ import {
   Pause,
   Play,
   ArrowLeft,
+  Mic,
+  Image as ImageIcon,
+  CheckCheck,
+  Check,
+  User,
+  Phone,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -28,6 +34,53 @@ function getAvatarColor(index: number) {
   return PASTEL_COLORS[index % PASTEL_COLORS.length];
 }
 
+function formatTime(dateStr: string) {
+  return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDateSeparator(dateStr: string) {
+  const d = new Date(dateStr);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatConvoDate(dateStr: string) {
+  const d = new Date(dateStr);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (d.toDateString() === today.toDateString()) {
+    return formatTime(dateStr);
+  }
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+function isVoiceNote(content: string) {
+  return content.startsWith('🎤 [Voice Note]:') || content.startsWith('[Voice Note]:');
+}
+
+function getVoiceNoteText(content: string) {
+  return content.replace(/^🎤?\s*\[Voice Note\]:\s*/, '');
+}
+
+function isImageMessage(content: string) {
+  return content === '[Customer sent an image]' || content.startsWith('[Image]');
+}
+
+function getLastMessagePreview(content: string) {
+  if (isVoiceNote(content)) return '🎤 Voice message';
+  if (isImageMessage(content)) return '📷 Photo';
+  if (content.length > 50) return content.slice(0, 50) + '...';
+  return content;
+}
+
 const Conversations: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
@@ -37,6 +90,7 @@ const Conversations: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState('');
   const [showChat, setShowChat] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -120,7 +174,30 @@ const Conversations: React.FC = () => {
     setShowChat(false);
   };
 
-  /* ---------- Loading ---------- */
+  const filteredConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversations;
+    const q = searchQuery.toLowerCase();
+    return conversations.filter(c =>
+      (c.customer_name || '').toLowerCase().includes(q) ||
+      (c.customer_jid || '').includes(q) ||
+      (c.summary || '').toLowerCase().includes(q)
+    );
+  }, [conversations, searchQuery]);
+
+  const messagesWithDateSeparators = useMemo(() => {
+    const result: any[] = [];
+    let lastDate = '';
+    for (const msg of messages) {
+      const msgDate = new Date(msg.created_at).toDateString();
+      if (msgDate !== lastDate) {
+        result.push({ _type: 'date_separator', date: msg.created_at, id: `sep-${msgDate}` });
+        lastDate = msgDate;
+      }
+      result.push(msg);
+    }
+    return result;
+  }, [messages]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-4">
@@ -130,99 +207,211 @@ const Conversations: React.FC = () => {
     );
   }
 
+  /* ---------- Message Bubble ---------- */
+  const renderMessage = (msg: any) => {
+    if (msg._type === 'date_separator') {
+      return (
+        <div key={msg.id} className="flex items-center justify-center my-3">
+          <span className="bg-cream-200/80 text-ink-50 text-[11px] font-medium px-3 py-1 rounded-lg shadow-sm">
+            {formatDateSeparator(msg.date)}
+          </span>
+        </div>
+      );
+    }
+
+    const isCustomer = msg.sender === 'customer';
+    const isAI = msg.sender === 'ai';
+    const isOwner = msg.sender === 'business_owner';
+    const isOutgoing = isAI || isOwner;
+    const content = msg.content || '';
+
+    return (
+      <div
+        key={msg.id}
+        className={cn(
+          "flex mb-1",
+          isCustomer ? "justify-start" : "justify-end"
+        )}
+      >
+        <div className={cn(
+          "relative max-w-[78%] px-3 py-2 text-[13.5px] leading-[1.45] shadow-sm",
+          isCustomer
+            ? "bg-white text-ink-300 rounded-lg rounded-tl-sm"
+            : isAI
+              ? "bg-[#dcf8c6] text-ink-300 rounded-lg rounded-tr-sm"
+              : "bg-[#e2f0ff] text-ink-300 rounded-lg rounded-tr-sm"
+        )}>
+          {/* Sender label for AI vs Owner */}
+          {isOutgoing && (
+            <div className={cn(
+              "text-[10px] font-semibold mb-0.5",
+              isAI ? "text-[#5b9a3f]" : "text-[#4a8abf]"
+            )}>
+              {isAI ? '🤖 AI' : '👤 You'}
+            </div>
+          )}
+
+          {/* Voice note message */}
+          {isVoiceNote(content) ? (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center",
+                  isCustomer ? "bg-pastel-sky" : "bg-pastel-sage"
+                )}>
+                  <Mic className="w-4 h-4 text-ink-200" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: 20 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "w-[3px] rounded-full",
+                          isCustomer ? "bg-ink-50/60" : "bg-[#5b9a3f]/40"
+                        )}
+                        style={{ height: `${Math.random() * 12 + 4}px` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[12px] text-ink-200 italic">
+                "{getVoiceNoteText(content)}"
+              </p>
+            </div>
+
+          /* Image message */
+          ) : isImageMessage(content) ? (
+            <div className="flex items-center gap-2 py-1">
+              <div className="w-10 h-10 bg-cream-200 rounded-lg flex items-center justify-center">
+                <ImageIcon className="w-5 h-5 text-ink-50" />
+              </div>
+              <span className="text-[12.5px] text-ink-200 italic">Photo</span>
+            </div>
+
+          /* Regular text message */
+          ) : (
+            <span className="whitespace-pre-wrap break-words">{content}</span>
+          )}
+
+          {/* Timestamp + status */}
+          <div className={cn(
+            "flex items-center gap-1 mt-0.5",
+            isCustomer ? "justify-end" : "justify-end"
+          )}>
+            <span className="text-[10px] text-ink-50/70">
+              {formatTime(msg.created_at)}
+            </span>
+            {isOutgoing && (
+              <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ---------- Conversation List ---------- */
   const conversationList = (
     <div className={cn(
-      "flex flex-col gap-4",
-      isMobile ? "w-full h-full" : "w-96"
+      "flex flex-col",
+      isMobile ? "w-full h-full" : "w-[340px] shrink-0"
     )}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-2">
-        <h1 className="font-display text-[22px] font-bold text-ink-400">Chats</h1>
+      <div className="flex items-center justify-between px-4 py-3">
+        <h1 className="font-display text-[20px] font-bold text-ink-400">Chats</h1>
         <span className="bg-pastel-lavender text-soft-lavender text-xs font-bold px-2.5 py-0.5 rounded-full">
           {conversations.length}
         </span>
       </div>
 
       {/* Search */}
-      <div className="relative group">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-50 group-focus-within:text-ink-200 transition-colors" />
-        <input
-          type="text"
-          placeholder="Search conversations..."
-          className="w-full bg-cream-200/60 rounded-2xl h-11 pl-11 pr-4 text-sm text-ink-300 placeholder:text-ink-50 focus:outline-none focus:ring-2 focus:ring-pastel-lavender transition-all"
-        />
+      <div className="px-3 pb-2">
+        <div className="relative group">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-50 group-focus-within:text-ink-200 transition-colors" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search name, number, or topic..."
+            className="w-full bg-cream-200/60 rounded-xl h-10 pl-10 pr-4 text-[13px] text-ink-300 placeholder:text-ink-50 focus:outline-none focus:ring-2 focus:ring-pastel-lavender transition-all"
+          />
+        </div>
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto pr-1 space-y-1.5">
-        {conversations.map((convo, idx) => {
-          const avatar = getAvatarColor(idx);
-          return (
-            <button
-              key={convo.id}
-              onClick={() => handleSelectConvo(convo)}
-              className={cn(
-                "w-full text-left p-3.5 rounded-2xl transition-all duration-200 relative",
-                selectedConvo?.id === convo.id
-                  ? "bg-pastel-peach/30"
-                  : "hover:bg-cream-100"
-              )}
-            >
-              {selectedConvo?.id === convo.id && (
-                <motion.div
-                  layoutId="active-chat-indicator"
-                  className="absolute left-0 top-2 bottom-2 w-1 rounded-full bg-soft-peach"
-                />
-              )}
-              <div className="flex gap-3">
-                {/* Avatar */}
-                <div className={cn(
-                  "w-12 h-12 rounded-full flex items-center justify-center font-display font-bold text-lg shrink-0",
-                  avatar.bg, avatar.text
-                )}>
-                  {convo.customer_name?.[0] || '?'}
-                </div>
+      <div className="flex-1 overflow-y-auto">
+        {filteredConversations.length === 0 ? (
+          <div className="text-center py-8 text-ink-50 text-sm">
+            {searchQuery ? 'No conversations match your search' : 'No conversations yet'}
+          </div>
+        ) : (
+          filteredConversations.map((convo, idx) => {
+            const avatar = getAvatarColor(idx);
+            const isSelected = selectedConvo?.id === convo.id;
+            return (
+              <button
+                key={convo.id}
+                onClick={() => handleSelectConvo(convo)}
+                className={cn(
+                  "w-full text-left px-3 py-2.5 transition-all duration-150 relative border-b border-cream-100",
+                  isSelected
+                    ? "bg-pastel-peach/20"
+                    : "hover:bg-cream-50"
+                )}
+              >
+                {isSelected && (
+                  <motion.div
+                    layoutId="active-chat"
+                    className="absolute left-0 top-1 bottom-1 w-[3px] rounded-full bg-soft-peach"
+                  />
+                )}
+                <div className="flex gap-3">
+                  <div className={cn(
+                    "w-11 h-11 rounded-full flex items-center justify-center font-display font-bold text-base shrink-0",
+                    avatar.bg, avatar.text
+                  )}>
+                    {convo.customer_name?.[0]?.toUpperCase() || '?'}
+                  </div>
 
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-[14px] font-semibold text-ink-300 truncate">
-                      {convo.customer_name || 'Unknown'}
-                    </h3>
-                    <span className="text-[11px] text-ink-50">
-                      {new Date(convo.last_message_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-ink-50 truncate">
-                    {convo.summary || 'Detecting intent...'}
-                  </p>
-                  <div className="flex items-center justify-between pt-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className={cn(
-                        "text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide",
-                        convo.wb_leads?.[0]?.score === 'high'
-                          ? "bg-pastel-rose text-soft-rose"
-                          : convo.wb_leads?.[0]?.score === 'medium'
-                            ? "bg-pastel-honey text-soft-honey"
-                            : "bg-pastel-sky text-soft-sky"
-                      )}>
-                        {convo.wb_leads?.[0]?.score || 'new'}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-[13.5px] font-semibold text-ink-300 truncate pr-2">
+                        {convo.customer_name || 'Unknown'}
+                      </h3>
+                      <span className="text-[11px] text-ink-50 shrink-0">
+                        {formatConvoDate(convo.last_message_at)}
                       </span>
-                      {convo.ai_paused && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-pastel-honey text-soft-honey flex items-center gap-0.5">
-                          <Pause className="w-2.5 h-2.5" /> Paused
-                        </span>
-                      )}
                     </div>
-                    <span className="text-[10px] text-ink-50 flex items-center gap-0.5">
-                      <Hash className="w-2.5 h-2.5" /> {convo.customer_jid.split('@')[0]}
-                    </span>
+                    <div className="flex items-center justify-between mt-0.5">
+                      <p className="text-[12px] text-ink-50 truncate pr-2">
+                        {convo.summary || 'New conversation...'}
+                      </p>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {convo.ai_paused && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-pastel-honey text-soft-honey">
+                            PAUSED
+                          </span>
+                        )}
+                        <span className={cn(
+                          "text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase",
+                          convo.wb_leads?.[0]?.score === 'high'
+                            ? "bg-pastel-rose text-soft-rose"
+                            : convo.wb_leads?.[0]?.score === 'medium'
+                              ? "bg-pastel-honey text-soft-honey"
+                              : "bg-pastel-sky text-soft-sky"
+                        )}>
+                          {convo.wb_leads?.[0]?.score || 'new'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </button>
-          );
-        })}
+              </button>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -233,25 +422,25 @@ const Conversations: React.FC = () => {
 
   const chatView = (
     <div className={cn(
-      "flex flex-col overflow-hidden bg-cream-50 rounded-2xl border border-cream-200",
-      isMobile ? "w-full h-full" : "flex-1"
+      "flex flex-col overflow-hidden",
+      isMobile ? "w-full h-full" : "flex-1 border-l border-cream-200"
     )}>
       <AnimatePresence mode="wait">
         {selectedConvo ? (
           <motion.div
             key="chat-active"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.98 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             className="flex flex-col h-full"
           >
             {/* Chat Header */}
-            <div className="px-5 py-4 border-b border-cream-200 flex items-center justify-between bg-cream-50">
+            <div className="px-4 py-3 border-b border-cream-200 flex items-center justify-between bg-cream-50">
               <div className="flex items-center gap-3">
                 {isMobile && (
                   <button
                     onClick={handleBack}
-                    className="p-2 -ml-2 rounded-xl hover:bg-cream-100 transition-colors text-ink-200"
+                    className="p-1.5 -ml-1 rounded-lg hover:bg-cream-100 transition-colors text-ink-200"
                   >
                     <ArrowLeft className="w-5 h-5" />
                   </button>
@@ -260,91 +449,78 @@ const Conversations: React.FC = () => {
                   "w-10 h-10 rounded-full flex items-center justify-center font-display font-bold text-sm",
                   chatAvatar.bg, chatAvatar.text
                 )}>
-                  {selectedConvo.customer_name?.[0] || '?'}
+                  {selectedConvo.customer_name?.[0]?.toUpperCase() || '?'}
                 </div>
                 <div>
-                  <h2 className="text-[15px] font-bold text-ink-300 leading-tight">
+                  <h2 className="text-[14px] font-bold text-ink-300 leading-tight">
                     {selectedConvo.customer_name}
                   </h2>
-                  <p className="text-[12px] text-ink-50 flex items-center gap-1.5">
-                    <span className={cn(
-                      "w-1.5 h-1.5 rounded-full",
-                      selectedConvo.ai_paused ? "bg-soft-honey" : "bg-success"
-                    )} />
-                    {selectedConvo.ai_paused ? 'AI Paused' : 'AI Active'}
+                  <p className="text-[11px] text-ink-50 flex items-center gap-1">
+                    <Phone className="w-3 h-3" />
+                    +{selectedConvo.customer_jid?.split('@')[0]}
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => togglePause(selectedConvo.id, selectedConvo.ai_paused)}
-                className={cn(
-                  "flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all",
+              <div className="flex items-center gap-2">
+                <div className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold",
                   selectedConvo.ai_paused
-                    ? "bg-pastel-honey/60 text-soft-honey hover:bg-pastel-honey"
-                    : "bg-pastel-sage/60 text-soft-sage hover:bg-pastel-sage"
-                )}
-              >
-                {selectedConvo.ai_paused
-                  ? <><Play className="w-3.5 h-3.5" /> Resume AI</>
-                  : <><Pause className="w-3.5 h-3.5" /> Pause AI</>
-                }
-              </button>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
+                    ? "bg-pastel-honey/40 text-soft-honey"
+                    : "bg-pastel-sage/40 text-soft-sage"
+                )}>
+                  <span className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    selectedConvo.ai_paused ? "bg-soft-honey" : "bg-success"
+                  )} />
+                  {selectedConvo.ai_paused ? 'AI Off' : 'AI On'}
+                </div>
+                <button
+                  onClick={() => togglePause(selectedConvo.id, selectedConvo.ai_paused)}
                   className={cn(
-                    "flex flex-col",
-                    msg.sender === 'customer' ? "items-start" : "items-end"
+                    "flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all",
+                    selectedConvo.ai_paused
+                      ? "bg-pastel-sage/60 text-soft-sage hover:bg-pastel-sage"
+                      : "bg-pastel-honey/60 text-soft-honey hover:bg-pastel-honey"
                   )}
                 >
-                  <div className={cn(
-                    "max-w-[75%] p-3.5 text-sm leading-relaxed text-ink-300",
-                    msg.sender === 'customer'
-                      ? "bg-cream-100 rounded-2xl rounded-tl-sm"
-                      : "bg-pastel-sage/50 rounded-2xl rounded-tr-sm"
-                  )}>
-                    {msg.content}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-1 px-1">
-                    {(msg.sender === 'ai' || msg.sender === 'business_owner') && (
-                      <span className={cn(
-                        "text-[10px] flex items-center gap-1",
-                        msg.sender === 'ai' ? "text-soft-sage" : "text-ink-50"
-                      )}>
-                        {msg.sender === 'ai' ? <><Bot className="w-3 h-3" /> AI Reply</> : "You"}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-ink-50">
-                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                  {selectedConvo.ai_paused
+                    ? <><Play className="w-3 h-3" /> Resume</>
+                    : <><Pause className="w-3 h-3" /> Pause</>
+                  }
+                </button>
+              </div>
+            </div>
+
+            {/* Messages — WhatsApp-style background */}
+            <div
+              className="flex-1 overflow-y-auto px-3 py-2"
+              style={{
+                backgroundColor: '#efeae2',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d4cfc6' fill-opacity='0.3'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+              }}
+            >
+              {messagesWithDateSeparators.map(renderMessage)}
               <div ref={messagesEndRef} />
             </div>
 
             {/* Compose Bar */}
             <form
               onSubmit={handleSendMessage}
-              className="bg-cream-50 border-t border-cream-200 p-3 flex gap-2"
+              className="bg-cream-50 border-t border-cream-200 px-3 py-2 flex items-center gap-2"
             >
               <input
                 type="text"
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 placeholder="Type a message..."
-                className="flex-1 bg-cream-100 rounded-2xl px-4 py-3 text-sm text-ink-300 placeholder:text-ink-50 focus:outline-none focus:ring-2 focus:ring-pastel-lavender/60 transition-all"
+                className="flex-1 bg-white rounded-full px-4 py-2.5 text-[13.5px] text-ink-300 placeholder:text-ink-50 focus:outline-none focus:ring-1 focus:ring-pastel-lavender/60 shadow-sm transition-all"
               />
               <button
                 type="submit"
                 disabled={!replyText.trim()}
-                className="w-11 h-11 bg-ink-300 rounded-full flex items-center justify-center text-cream-50 hover:bg-ink-400 transition-colors disabled:opacity-40 shrink-0"
+                className="w-10 h-10 bg-[#00a884] rounded-full flex items-center justify-center text-white hover:bg-[#008f6f] transition-colors disabled:opacity-40 shrink-0 shadow-sm"
               >
-                <Send className="w-4.5 h-4.5" />
+                <Send className="w-4 h-4" />
               </button>
             </form>
           </motion.div>
@@ -353,14 +529,16 @@ const Conversations: React.FC = () => {
             key="chat-empty"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex-1 flex flex-col items-center justify-center text-center p-12 space-y-5"
+            className="flex-1 flex flex-col items-center justify-center text-center p-12 space-y-4 bg-cream-50"
           >
-            <div className="w-24 h-24 bg-pastel-lilac rounded-full flex items-center justify-center">
-              <MessageSquare className="w-10 h-10 text-soft-lavender" />
+            <div className="w-20 h-20 bg-pastel-lilac/50 rounded-full flex items-center justify-center">
+              <MessageSquare className="w-9 h-9 text-soft-lavender" />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <h3 className="font-display text-lg font-bold text-ink-300">Select a conversation</h3>
-              <p className="text-sm text-ink-50">Pick a chat from the left to start.</p>
+              <p className="text-sm text-ink-50 max-w-xs">
+                Pick a chat from the left to view messages and reply to customers.
+              </p>
             </div>
           </motion.div>
         )}
@@ -378,7 +556,7 @@ const Conversations: React.FC = () => {
   }
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex gap-4 overflow-hidden">
+    <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-cream-100 rounded-2xl border border-cream-200">
       {conversationList}
       {chatView}
     </div>
