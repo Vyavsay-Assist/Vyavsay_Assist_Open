@@ -6,8 +6,6 @@ import { useIsMobile } from '../hooks/useMediaQuery';
 import {
   Search,
   Send,
-  Bot,
-  Hash,
   MessageSquare,
   Pause,
   Play,
@@ -15,8 +13,6 @@ import {
   Mic,
   Image as ImageIcon,
   CheckCheck,
-  Check,
-  User,
   Phone,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -72,13 +68,6 @@ function getVoiceNoteText(content: string) {
 
 function isImageMessage(content: string) {
   return content === '[Customer sent an image]' || content.startsWith('[Image]');
-}
-
-function getLastMessagePreview(content: string) {
-  if (isVoiceNote(content)) return '🎤 Voice message';
-  if (isImageMessage(content)) return '📷 Photo';
-  if (content.length > 50) return content.slice(0, 50) + '...';
-  return content;
 }
 
 const Conversations: React.FC = () => {
