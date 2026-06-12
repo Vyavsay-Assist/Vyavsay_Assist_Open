@@ -262,7 +262,11 @@ async function handleAudioMessage(
 ): Promise<void> {
   try {
     const accessToken = await resolveAccessToken(server, phoneNumberId);
-    const { buffer: audioBuffer } = await downloadMetaMedia(audioId, accessToken);
+    const { buffer: audioBuffer, mimetype } = await downloadMetaMedia(audioId, accessToken);
+
+    // Upload to Supabase Storage so dashboard can play it back
+    const { uploadIncomingMedia } = await import('../services/message-media-service.js');
+    const mediaUrl = await uploadIncomingMedia(server.supabase, userId, audioBuffer, mimetype, 'voice');
 
     const { transcribeVoiceNote } = await import('../services/voice-transcription-service.js');
     const { text } = await transcribeVoiceNote(audioBuffer);
@@ -275,7 +279,7 @@ async function handleAudioMessage(
 
     const result = await pipelineService.processIncomingMessage(
       userId, customerJid, customerName, customerPhone, text,
-      { type: 'voice_note', durationSecs: 0 },
+      { type: 'voice_note', durationSecs: 0, mediaUrl: mediaUrl ?? undefined, mimetype },
     );
 
     // TTS voice reply (mirrors old BaileysAdapter behaviour)
@@ -309,10 +313,14 @@ async function handleImageMessage(
     const { buffer: imageBuffer, mimetype } = await downloadMetaMedia(imageId, accessToken);
     const base64 = imageBuffer.toString('base64');
 
+    // Upload to Supabase Storage so dashboard can render the actual image
+    const { uploadIncomingMedia } = await import('../services/message-media-service.js');
+    const mediaUrl = await uploadIncomingMedia(server.supabase, userId, imageBuffer, mimetype, 'image');
+
     await pipelineService.processIncomingMessage(
       userId, customerJid, customerName, customerPhone,
       caption || '[Customer sent an image]',
-      { type: 'image', base64, mimetype },
+      { type: 'image', base64, mimetype, mediaUrl: mediaUrl ?? undefined },
     );
   } catch (err: any) {
     console.error(`❌ handleImageMessage error: ${err.message}`);

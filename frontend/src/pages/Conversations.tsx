@@ -91,7 +91,10 @@ const Conversations: React.FC = () => {
   const [replyText, setReplyText] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const prevMessageCount = useRef(0);
 
   useEffect(() => {
     if (user) fetchConversations();
@@ -109,7 +112,24 @@ const Conversations: React.FC = () => {
   }, [selectedConvo]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length === 0) return;
+    const isNewMessage = messages.length > prevMessageCount.current;
+    prevMessageCount.current = messages.length;
+
+    if (!isNewMessage) return;
+
+    const container = messagesContainerRef.current;
+    if (!container) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 150;
+
+    if (isNearBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const fetchConversations = async () => {
@@ -166,6 +186,7 @@ const Conversations: React.FC = () => {
   };
 
   const handleSelectConvo = (convo: any) => {
+    prevMessageCount.current = 0;
     setSelectedConvo(convo);
     if (isMobile) setShowChat(true);
   };
@@ -251,43 +272,62 @@ const Conversations: React.FC = () => {
             </div>
           )}
 
-          {/* Voice note message */}
-          {isVoiceNote(content) ? (
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center",
-                  isCustomer ? "bg-pastel-sky" : "bg-pastel-sage"
-                )}>
-                  <Mic className="w-4 h-4 text-ink-200" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: 20 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "w-[3px] rounded-full",
-                          isCustomer ? "bg-ink-50/60" : "bg-[#5b9a3f]/40"
-                        )}
-                        style={{ height: `${Math.random() * 12 + 4}px` }}
-                      />
-                    ))}
-                  </div>
-                </div>
+          {/* Image — real image when we have a URL, placeholder otherwise */}
+          {(msg.media_type === 'image' || isImageMessage(content)) ? (
+            msg.media_url ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setLightboxImage(msg.media_url)}
+                  className="block rounded-lg overflow-hidden focus:outline-none focus:ring-2 focus:ring-pastel-lavender"
+                >
+                  <img
+                    src={msg.media_url}
+                    alt="Shared media"
+                    className="max-w-[260px] max-h-[320px] rounded-lg object-cover hover:opacity-95 transition-opacity"
+                  />
+                </button>
+                {content && !isImageMessage(content) && (
+                  <p className="text-[13px] mt-1.5 whitespace-pre-wrap break-words">{content}</p>
+                )}
               </div>
-              <p className="text-[12px] text-ink-200 italic">
-                "{getVoiceNoteText(content)}"
-              </p>
-            </div>
+            ) : (
+              <div className="flex items-center gap-2 py-1">
+                <div className="w-10 h-10 bg-cream-200 rounded-lg flex items-center justify-center">
+                  <ImageIcon className="w-5 h-5 text-ink-50" />
+                </div>
+                <span className="text-[12.5px] text-ink-200 italic">
+                  {isImageMessage(content) ? 'Photo (not stored)' : content}
+                </span>
+              </div>
+            )
 
-          /* Image message */
-          ) : isImageMessage(content) ? (
-            <div className="flex items-center gap-2 py-1">
-              <div className="w-10 h-10 bg-cream-200 rounded-lg flex items-center justify-center">
-                <ImageIcon className="w-5 h-5 text-ink-50" />
-              </div>
-              <span className="text-[12.5px] text-ink-200 italic">Photo</span>
+          /* Voice / audio — real player when we have a URL, transcript-only otherwise */
+          ) : (msg.media_type === 'voice' || msg.media_type === 'audio' || isVoiceNote(content)) ? (
+            <div>
+              {msg.media_url ? (
+                <audio
+                  controls
+                  src={msg.media_url}
+                  className="w-full max-w-[260px] h-10"
+                  preload="metadata"
+                />
+              ) : (
+                <div className="flex items-center gap-2 mb-1">
+                  <div className={cn(
+                    "w-8 h-8 rounded-full flex items-center justify-center",
+                    isCustomer ? "bg-pastel-sky" : "bg-pastel-sage"
+                  )}>
+                    <Mic className="w-4 h-4 text-ink-200" />
+                  </div>
+                  <span className="text-[11px] text-ink-50 italic">Voice note (not stored)</span>
+                </div>
+              )}
+              {isVoiceNote(content) && (
+                <p className="text-[12px] text-ink-200 italic mt-1.5">
+                  "{getVoiceNoteText(content)}"
+                </p>
+              )}
             </div>
 
           /* Regular text message */
@@ -493,6 +533,7 @@ const Conversations: React.FC = () => {
 
             {/* Messages — WhatsApp-style background */}
             <div
+              ref={messagesContainerRef}
               className="flex-1 overflow-y-auto px-3 py-2"
               style={{
                 backgroundColor: '#efeae2',
@@ -546,20 +587,49 @@ const Conversations: React.FC = () => {
     </div>
   );
 
+  /* ---------- Image Lightbox ---------- */
+  const lightbox = lightboxImage && (
+    <div
+      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+      onClick={() => setLightboxImage(null)}
+    >
+      <img
+        src={lightboxImage}
+        alt="Full view"
+        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        onClick={() => setLightboxImage(null)}
+        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center text-xl"
+        aria-label="Close"
+      >
+        ×
+      </button>
+    </div>
+  );
+
   /* ---------- Render ---------- */
   if (isMobile) {
     return (
-      <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
-        {showChat && selectedConvo ? chatView : conversationList}
-      </div>
+      <>
+        <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+          {showChat && selectedConvo ? chatView : conversationList}
+        </div>
+        {lightbox}
+      </>
     );
   }
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-cream-100 rounded-2xl border border-cream-200">
-      {conversationList}
-      {chatView}
-    </div>
+    <>
+      <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-cream-100 rounded-2xl border border-cream-200">
+        {conversationList}
+        {chatView}
+      </div>
+      {lightbox}
+    </>
   );
 };
 

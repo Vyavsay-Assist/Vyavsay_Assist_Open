@@ -16,6 +16,8 @@ export interface MediaAttachment {
   base64?: string;
   mimetype?: string;
   durationSecs?: number;
+  /** Public URL in Supabase Storage — for dashboard playback/viewing */
+  mediaUrl?: string;
 }
 
 const URL_REGEX = /^https?:\/\//i;
@@ -140,10 +142,16 @@ export class PipelineService {
     const storedContent = media?.type === 'voice_note'
       ? `🎤 [Voice Note]: ${messageText}`
       : messageText;
+    const mediaTypeForDb = media?.type === 'voice_note' ? 'voice'
+      : media?.type === 'image' ? 'image'
+      : null;
     await this.supabase.from('wb_messages').insert({
       conversation_id: conversation.id,
       sender: senderLabel,
       content: storedContent,
+      media_type: mediaTypeForDb,
+      media_url: media?.mediaUrl ?? null,
+      media_mime_type: media?.mimetype ?? null,
     });
 
     // 4. Get conversation history for context — load MORE messages for better memory
