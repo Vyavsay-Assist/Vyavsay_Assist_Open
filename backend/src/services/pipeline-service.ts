@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { analyzeMessage, generateReply, generateSummary, AnalysisResult, identifyCarFromImage } from './ai-router.js';
 import { RagService } from './rag-service.js';
 import { CatalogService } from './catalog-service.js';
-import { baileysAdapter } from './baileys-adapter.js';
+import { cloudClient as baileysAdapter } from './whatsapp-cloud-client.js';
 import { reminderService } from './reminder-service.js';
 import { AppointmentService } from './appointment-service.js';
 import { createClient } from '@supabase/supabase-js';
@@ -16,6 +16,8 @@ export interface MediaAttachment {
   base64?: string;
   mimetype?: string;
   durationSecs?: number;
+  /** Public URL in Supabase Storage — for dashboard playback/viewing */
+  mediaUrl?: string;
 }
 
 const URL_REGEX = /^https?:\/\//i;
@@ -118,6 +120,21 @@ export class PipelineService {
       return { success: false, autoReplied: false, analysis: null };
     }
 
+    // 2.5. Upsert unified customer record and link conversation
+    const customerId = await this.upsertCustomerFromWhatsApp(
+      userId,
+      customerJid,
+      customerName,
+      customerPhone,
+    );
+    if (customerId && !conversation.customer_id) {
+      await this.supabase
+        .from('wb_conversations')
+        .update({ customer_id: customerId })
+        .eq('id', conversation.id);
+      conversation.customer_id = customerId;
+    }
+
     // 3. Store incoming message (annotate source if voice/image)
     const senderLabel = media?.type === 'voice_note' ? 'customer'
       : media?.type === 'image' ? 'customer'
@@ -125,10 +142,16 @@ export class PipelineService {
     const storedContent = media?.type === 'voice_note'
       ? `🎤 [Voice Note]: ${messageText}`
       : messageText;
+    const mediaTypeForDb = media?.type === 'voice_note' ? 'voice'
+      : media?.type === 'image' ? 'image'
+      : null;
     await this.supabase.from('wb_messages').insert({
       conversation_id: conversation.id,
       sender: senderLabel,
       content: storedContent,
+      media_type: mediaTypeForDb,
+      media_url: media?.mediaUrl ?? null,
+      media_mime_type: media?.mimetype ?? null,
     });
 
     // 4. Get conversation history for context — load MORE messages for better memory
@@ -152,7 +175,7 @@ export class PipelineService {
         await this.supabase.from('wb_messages').insert({
           conversation_id: conversation.id, sender: 'ai', content: capMsg,
         });
-        await this.supabase.from('wb_conversations').update({ ai_paused: true }).eq('id', conversation.id);
+        // Don't auto-pause — AI keeps replying (for demo/hackathon reliability)
       } catch (capErr: any) {
         console.error('[Pipeline] Cap escalation failed:', capErr.message);
       }
@@ -562,11 +585,7 @@ export class PipelineService {
           await this.supabase.from('wb_messages').insert({
             conversation_id: conversation.id, sender: 'ai', content: escalationMsg,
           });
-          // Pause AI for this conversation — human takes over
-          await this.supabase
-            .from('wb_conversations')
-            .update({ ai_paused: true })
-            .eq('id', conversation.id);
+          // Don't pause — AI keeps replying for demo reliability
           autoReplied = true;
         }
         return { success: true, autoReplied, analysis };
@@ -606,10 +625,7 @@ export class PipelineService {
       await this.supabase.from('wb_messages').insert({
         conversation_id: conversation.id, sender: 'ai', content: handoffMsg,
       });
-      await this.supabase
-        .from('wb_conversations')
-        .update({ ai_paused: true })
-        .eq('id', conversation.id);
+      // Don't pause — AI keeps replying for demo reliability
       return { success: true, autoReplied: true, analysis };
     }
 
@@ -1259,6 +1275,51 @@ export class PipelineService {
       return `₹${(value / 100000).toFixed(1).replace(/\.0$/, '')} lakh`;
     }
     return `₹${value}`;
+  }
+
+  /**
+   * Upsert a unified `customers` row for the WhatsApp sender.
+   * Returns the customer.id, or null on failure.
+   */
+  private async upsertCustomerFromWhatsApp(
+    userId: string,
+    customerJid: string,
+    customerName: string,
+    customerPhone: string,
+  ): Promise<string | null> {
+    const phoneOrJid = customerPhone || customerJid;
+    if (!phoneOrJid) return null;
+
+    const { data: existing } = await this.supabase
+      .from('customers')
+      .select('id, full_name')
+      .eq('user_id', userId)
+      .eq('primary_phone', phoneOrJid)
+      .maybeSingle();
+
+    if (existing) {
+      const updates: any = { last_activity_at: new Date().toISOString() };
+      if (customerName && !existing.full_name) updates.full_name = customerName;
+      await this.supabase.from('customers').update(updates).eq('id', existing.id);
+      return existing.id;
+    }
+
+    const { data: created, error } = await this.supabase
+      .from('customers')
+      .insert({
+        user_id: userId,
+        full_name: customerName || 'Unknown',
+        primary_phone: phoneOrJid,
+        first_seen_via: 'whatsapp',
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('[Pipeline] Failed to upsert customer:', error.message);
+      return null;
+    }
+    return created.id;
   }
 }
 

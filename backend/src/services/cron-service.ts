@@ -1,7 +1,6 @@
 import cron from 'node-cron';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { baileysAdapter } from './baileys-adapter.js';
-import { sessionManager } from './session-manager.js';
+import { cloudClient } from './whatsapp-cloud-client.js';
 import { SheetsSyncService } from './sheets-sync-service.js';
 
 /**
@@ -84,12 +83,18 @@ export class CronService {
         `✅ You have *${pendingTasks}* pending tasks.\n\n` +
         `Check your dashboard: ${process.env.FRONTEND_URL || 'http://localhost:3003'}`;
 
-      // Find the user's active WhatsApp session to send the report to themselves
-      const session = sessionManager.getSession(user.id);
-      if (session?.status === 'connected' && session.phone) {
-        const jid = `${session.phone}@s.whatsapp.net`;
-        await baileysAdapter.sendMessage(user.id, jid, report);
-        console.log(`📈 [Cron] Sent daily report to ${user.id}`);
+      // Look up the owner's WhatsApp number from their Cloud API account
+      const { data: waba } = await this.supabase
+        .from('wb_waba_accounts')
+        .select('display_phone_number')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (waba?.display_phone_number) {
+        const jid = `${waba.display_phone_number.replace(/\D/g, '')}@s.whatsapp.net`;
+        await cloudClient.sendMessage(user.id, jid, report);
+        console.log(`📈 [Cron] Sent daily report to ${user.id.slice(0, 8)}`);
       }
     }
   }
@@ -112,7 +117,7 @@ export class CronService {
 
       const nudge = `Hi ${lead.customer_name}! Just checking in to see if you had any other questions or if there's anything else I can help with? 😊`;
       
-      const sent = await baileysAdapter.sendMessage(lead.user_id, convo.customer_jid, nudge);
+      const sent = await cloudClient.sendMessage(lead.user_id, convo.customer_jid, nudge);
       if (sent) {
         await this.supabase.from('wb_leads').update({ stage: 'followed_up' }).eq('id', lead.id);
         console.log(`🔔 [Cron] Sent follow-up nudge to ${lead.customer_name}`);

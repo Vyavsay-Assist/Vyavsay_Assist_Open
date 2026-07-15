@@ -47,52 +47,55 @@ export async function generateVoiceReply(text: string): Promise<Buffer | null> {
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    // For Hindi/Marathi/Hinglish text, use OpenAI (multilingual support)
-    // For English text, try Groq first (free), fallback to OpenAI
-    if (!isIndic && groqTts) {
+    // Try OpenAI FIRST if available (supports all languages)
+    if (openaiTts) {
       try {
+        const response = await openaiTts.audio.speech.create(
+          {
+            model: 'tts-1',
+            voice: 'nova',
+            input: text,
+            response_format: 'opus',
+          },
+          { signal: controller.signal as any },
+        );
+
+        const buf = Buffer.from(await response.arrayBuffer());
+        console.log(`[TTS] Generated voice reply via OpenAI — ${text.length} chars, ${buf.length} bytes`);
+        return buf;
+      } catch (openaiErr: any) {
+        console.warn(`[TTS] OpenAI TTS failed: ${openaiErr.message}, falling back to Groq...`);
+      }
+    }
+
+    // Fallback: Groq (English only, but works for Hinglish too with some mispronunciation)
+    if (groqTts) {
+      try {
+        // For non-English text, transliterate common Hindi words to approximation
+        const ttsText = isIndic ? transliterateForGroq(text) : text;
         const response = await groqTts.audio.speech.create(
           {
             model: 'canopylabs/orpheus-v1-english' as any,
             voice: 'hannah' as any,
-            input: text,
+            input: ttsText,
             response_format: 'wav',
           },
           { signal: controller.signal as any },
         );
 
         const wavBuf = Buffer.from(await response.arrayBuffer());
-
-        // Convert WAV → OGG/Opus for WhatsApp using ffmpeg
         const opusBuf = convertWavToOpus(wavBuf);
         if (opusBuf) {
-          console.log(`[TTS] Generated voice reply via Groq — ${text.length} chars, ${opusBuf.length} bytes`);
+          console.log(`[TTS] Generated voice reply via Groq — ${ttsText.length} chars, ${opusBuf.length} bytes`);
           return opusBuf;
         }
-        console.warn('[TTS] WAV→Opus conversion failed, trying OpenAI...');
+        console.warn('[TTS] WAV→Opus conversion failed');
       } catch (groqErr: any) {
-        console.warn(`[TTS] Groq TTS failed: ${groqErr.message}, trying OpenAI...`);
+        console.warn(`[TTS] Groq TTS failed: ${groqErr.message}`);
       }
     }
 
-    // OpenAI TTS — supports Hindi, Marathi, English, Hinglish
-    if (openaiTts) {
-      const response = await openaiTts.audio.speech.create(
-        {
-          model: 'tts-1',
-          voice: 'nova',
-          input: text,
-          response_format: 'opus',
-        },
-        { signal: controller.signal as any },
-      );
-
-      const buf = Buffer.from(await response.arrayBuffer());
-      console.log(`[TTS] Generated voice reply via OpenAI — ${text.length} chars, ${buf.length} bytes`);
-      return buf;
-    }
-
-    console.warn('[TTS] No suitable TTS provider for this language');
+    console.warn('[TTS] All TTS providers failed');
     return null;
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -104,6 +107,15 @@ export async function generateVoiceReply(text: string): Promise<Buffer | null> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Simple transliteration of common Devanagari words for Groq English TTS fallback.
+ * Not perfect, but better than nothing when OpenAI is unavailable.
+ */
+function transliterateForGroq(text: string): string {
+  // Strip Devanagari characters - replace with space
+  return text.replace(/[\u0900-\u097F]+/g, ' ').replace(/\s+/g, ' ').trim() || text;
 }
 
 /**

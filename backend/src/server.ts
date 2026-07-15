@@ -5,14 +5,10 @@ import corsPlugin from './plugins/cors-plugin.js';
 import supabasePlugin from './plugins/supabase-plugin.js';
 import authPlugin from './plugins/auth-plugin.js';
 import { healthRoutes } from './routes/health-routes.js';
-import { sessionRoutes } from './routes/session-routes.js';
+import { webhookRoutes } from './routes/webhook-routes.js';
 import { conversationRoutes } from './routes/conversation-routes.js';
 import { leadRoutes } from './routes/lead-routes.js';
 import { taskRoutes } from './routes/task-routes.js';
-import { sessionManager } from './services/session-manager.js';
-
-// Import to initialize the adapter (sets up message listeners)
-import './services/baileys-adapter.js';
 
 const fastify = Fastify({
   logger: {
@@ -36,7 +32,7 @@ async function main() {
 
   // Register routes
   await fastify.register(healthRoutes, { prefix: '/api' });
-  await fastify.register(sessionRoutes, { prefix: '/api' });
+  await fastify.register(webhookRoutes, { prefix: '/api/webhook' });
   await fastify.register(conversationRoutes, { prefix: '/api/conversations' });
   await fastify.register(leadRoutes, { prefix: '/api/leads' });
   await fastify.register(taskRoutes, { prefix: '/api/tasks' });
@@ -60,15 +56,19 @@ async function main() {
   const { ownerRoutes } = await import('./routes/owner-routes.js');
   await fastify.register(ownerRoutes, { prefix: '/api/owner' });
 
+  const { customerRoutes } = await import('./routes/customer-routes.js');
+  await fastify.register(customerRoutes, { prefix: '/api/customers' });
+
+  const { visitRoutes } = await import('./routes/visit-routes.js');
+  await fastify.register(visitRoutes, { prefix: '/api/visits' });
+
+  const { voiceRoutes } = await import('./routes/voice-routes.js');
+  await fastify.register(voiceRoutes, { prefix: '/api/voice' });
+
   // Voice agent webhook (Vapi) — no auth required, Vapi calls directly
   const { vapiRoutes } = await import('./routes/vapi-routes.js');
   await fastify.register(vapiRoutes, { prefix: '/api/vapi' });
 
-
-  // Restore persisted Baileys sessions on startup (non-blocking)
-  sessionManager.restoreAllSessions().catch(err => {
-    console.error('⚠️ Session restore error:', err.message);
-  });
 
   // Initialize Cron Service
   const { CronService } = await import('./services/cron-service.js');
@@ -78,9 +78,9 @@ async function main() {
   // Start server
   try {
     await fastify.listen({ port: config.PORT, host: '0.0.0.0' });
-    console.log(`\n🚀 Vyavsay Baileys API running on http://localhost:${config.PORT}`);
-    console.log(`📡 Health: http://localhost:${config.PORT}/api/health`);
-    console.log(`📱 Sessions: http://localhost:${config.PORT}/api/sessions`);
+    console.log(`\n🚀 VyavsayAssist API running on http://localhost:${config.PORT}`);
+    console.log(`📡 Health:   http://localhost:${config.PORT}/api/health`);
+    console.log(`📲 Webhook:  http://localhost:${config.PORT}/api/webhook/whatsapp`);
     console.log(`🔒 Auth: Enabled | Helmet: Enabled | Env: ${config.NODE_ENV}\n`);
   } catch (err) {
     fastify.log.error(err);

@@ -17,8 +17,12 @@ export const config = {
   // AI — GPT-4o via Azure
   GITHUB_PAT: process.env.GITHUB_PAT || '',
 
-  // Baileys auth sessions directory
-  AUTH_SESSIONS_DIR: process.env.AUTH_SESSIONS_DIR || './auth_sessions_v2',
+  // WhatsApp Cloud API (Meta)
+  META_APP_SECRET: process.env.META_APP_SECRET || '',
+  META_WEBHOOK_VERIFY_TOKEN: process.env.META_WEBHOOK_VERIFY_TOKEN || '',
+  META_PHONE_NUMBER_ID: process.env.META_PHONE_NUMBER_ID || '',
+  META_SYSTEM_USER_TOKEN: process.env.META_SYSTEM_USER_TOKEN || '',
+  META_WABA_ID: process.env.META_WABA_ID || '',
 
   // Vapi Voice Agent
   VAPI_API_KEY: process.env.VAPI_API_KEY || '',

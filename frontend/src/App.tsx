@@ -6,6 +6,8 @@ import AppShell from './components/layout/AppShell';
 import Dashboard from './pages/Dashboard';
 import Conversations from './pages/Conversations';
 import Leads from './pages/Leads';
+import Customers from './pages/Customers';
+import CustomerDetail from './pages/CustomerDetail';
 import Tasks from './pages/Tasks';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
@@ -16,6 +18,11 @@ import VoiceCalls from './pages/VoiceCalls';
 import OwnerDashboard from './pages/OwnerDashboard';
 import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
+import LandingPage from './pages/landing/LandingPage';
+import PricingPage from './pages/landing/PricingPage';
+import PrivacyPage from './pages/landing/PrivacyPage';
+import TermsPage from './pages/landing/TermsPage';
+import ContactPage from './pages/landing/ContactPage';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -41,8 +48,14 @@ const AppContent: React.FC = () => {
   if (!user) {
     return (
       <Routes>
+        {/* Public landing pages */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/contact" element={<ContactPage />} />
         <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
   }
@@ -51,11 +64,17 @@ const AppContent: React.FC = () => {
     <AppShell>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/contact" element={<ContactPage />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
         <Route path="/qr-scanner" element={<ProtectedRoute><QRScanner /></ProtectedRoute>} />
         <Route path="/conversations" element={<ProtectedRoute><Conversations /></ProtectedRoute>} />
+        <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+        <Route path="/customers/:id" element={<ProtectedRoute><CustomerDetail /></ProtectedRoute>} />
         <Route path="/leads" element={<ProtectedRoute><Leads /></ProtectedRoute>} />
         <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
         <Route path="/appointments" element={<ProtectedRoute><Appointments /></ProtectedRoute>} />

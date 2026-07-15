@@ -15,6 +15,7 @@ declare module 'fastify' {
 const PUBLIC_ROUTES = [
   '/api/health',
   '/api/vapi/webhook',
+  '/api/webhook/whatsapp',
 ];
 
 // Use the anon-key client for auth verification (not service role)

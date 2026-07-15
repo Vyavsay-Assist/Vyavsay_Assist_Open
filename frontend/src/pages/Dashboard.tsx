@@ -10,6 +10,7 @@ import {
   WifiOff,
   User,
   ArrowRight,
+  LogOut,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
@@ -20,6 +21,23 @@ const Dashboard: React.FC = () => {
   const [sessions, setSessions] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+
+  const handleDisconnect = async (sessionUserId: string) => {
+    if (!confirm('Disconnect this WhatsApp device? You will need to scan a new QR to reconnect.')) return;
+    setDisconnectingId(sessionUserId);
+    try {
+      await client.delete(`/sessions/${sessionUserId}`);
+      // Refresh the session list from the server so UI reflects reality
+      const sessionsRes = await client.get('/sessions').catch(() => ({ data: { sessions: [] } }));
+      setSessions(sessionsRes.data.sessions || []);
+    } catch (err) {
+      console.error('Disconnect failed', err);
+      alert('Failed to disconnect. Please try again.');
+    } finally {
+      setDisconnectingId(null);
+    }
+  };
 
   useEffect(() => {
     if (user) fetchAll();
@@ -299,31 +317,54 @@ const Dashboard: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-1">
-            {sessions.map((session, i) => (
-              <button
-                key={i}
-                onClick={() => navigate('/qr-scanner')}
-                className="w-full flex items-center justify-between rounded-2xl p-3 hover:bg-cream-100 transition-colors text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-soft-lavender/40"
-                aria-label="Open Connect WhatsApp"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-pastel-lavender flex items-center justify-center">
-                    <Phone className="w-4 h-4 text-soft-lavender" />
+            {sessions.map((session, i) => {
+              const isConnectedSession = session.status === 'connected';
+              const isBusy = disconnectingId === session.userId;
+              return (
+                <div
+                  key={session.userId || i}
+                  className="w-full flex items-center justify-between rounded-2xl p-3 hover:bg-cream-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-pastel-lavender flex items-center justify-center shrink-0">
+                      <Phone className="w-4 h-4 text-soft-lavender" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold text-ink-300 truncate">
+                        {session.phone ? `+${session.phone}` : 'Pending...'}
+                      </p>
+                      <p className="text-[11px] text-ink-50 truncate">
+                        {session.connectedAt
+                          ? `Connected ${new Date(session.connectedAt).toLocaleDateString()}`
+                          : 'Awaiting QR scan'}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-[13px] font-semibold text-ink-300">
-                      {session.phone ? `+${session.phone}` : 'Pending...'}
-                    </p>
-                    <p className="text-[11px] text-ink-50">
-                      {session.connectedAt
-                        ? `Connected ${new Date(session.connectedAt).toLocaleDateString()}`
-                        : 'Awaiting QR scan'}
-                    </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className={`w-2.5 h-2.5 rounded-full ${isConnectedSession ? 'bg-success' : 'bg-cream-200'}`} />
+                    {isConnectedSession ? (
+                      <button
+                        onClick={() => handleDisconnect(session.userId)}
+                        disabled={isBusy}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-soft-rose bg-pastel-rose/60 hover:bg-pastel-rose rounded-full px-3 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-soft-rose/40"
+                        aria-label="Disconnect WhatsApp device"
+                      >
+                        <LogOut className="w-3 h-3" />
+                        {isBusy ? 'Disconnecting...' : 'Disconnect'}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => navigate('/qr-scanner')}
+                        className="text-[11px] font-semibold text-soft-lavender bg-pastel-lavender/60 hover:bg-pastel-lavender rounded-full px-3 py-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-soft-lavender/40"
+                        aria-label="Reconnect WhatsApp"
+                      >
+                        Reconnect
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className={`w-2.5 h-2.5 rounded-full ${session.status === 'connected' ? 'bg-success' : 'bg-cream-200'}`} />
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </motion.div>

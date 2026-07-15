@@ -370,3 +370,159 @@ Return JSON with these fields:
     return fallback;
   }
 }
+
+// ─────────────────────────────────────────
+// Walk-In Voice Extraction (Phase 1.2)
+// ─────────────────────────────────────────
+
+export interface WalkInExtraction {
+  customer_name?: string;
+  customer_phone?: string;
+  items_mentioned: string[];
+  outcome?: 'interested' | 'will_decide' | 'purchased' | 'not_interested' | 'follow_up';
+  follow_up_hint?: string;
+  staff_name?: string;
+  notes: string;
+}
+
+const VALID_OUTCOMES = ['interested', 'will_decide', 'purchased', 'not_interested', 'follow_up'] as const;
+
+/**
+ * Extract a 10-digit Indian mobile from a transcript. Used as a safety net
+ * when GPT misses the phone (digit recognition is sometimes wonky in mixed-
+ * language transcripts).
+ */
+function extractIndianPhoneFromText(text: string): string | undefined {
+  const digits = text.replace(/[^\d]/g, '');
+  const match10 = digits.match(/[6-9]\d{9}/);
+  if (match10) return match10[0];
+  const match12 = digits.match(/91([6-9]\d{9})/);
+  if (match12) return match12[1];
+  return undefined;
+}
+
+/**
+ * Regex fallback: extract a customer name from the transcript when GPT returns none.
+ * Looks for 1-4 proper words BEFORE the phone number (most common Indian voice note pattern:
+ * "Rajesh Sharma 9876543210, Fortuner chahiye").
+ */
+function extractNameFromTranscript(transcript: string): string | undefined {
+  const phoneMatch = transcript.match(/\b[6-9]\d{9}\b/);
+  if (!phoneMatch || phoneMatch.index === undefined) return undefined;
+  const beforePhone = transcript.slice(0, phoneMatch.index).trim();
+  if (!beforePhone) return undefined;
+
+  const FILLERS = new Set([
+    'customer', 'client', 'aaya', 'aayi', 'ne', 'ka', 'ki', 'ke', 'ko', 'se',
+    'bola', 'boli', 'said', 'naam', 'name', 'phone', 'number', 'mobile',
+    'contact', 'the', 'a', 'is', 'are', 'ek', 'yeh', 'woh', 'jo', 'aur',
+    'toh', 'bhi', 'kuch', 'unka', 'unki', 'inka', 'inki', 'sir', 'madam',
+  ]);
+
+  const words = beforePhone
+    .split(/[\s,।]+/)
+    .map(w => w.replace(/[^a-zA-Z\u0900-\u097F]/g, '').trim())
+    .filter(w => w.length >= 2 && !/^\d+$/.test(w) && !FILLERS.has(w.toLowerCase()));
+
+  if (words.length === 0 || words.length > 4) return undefined;
+  // Capitalise first letter of each word (voice notes are often all-lowercase from Whisper)
+  return words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/**
+ * Extract structured walk-in data from a salesperson's voice transcript.
+ * Uses few-shot examples (works far better than abstract rules) plus a
+ * regex-based phone fallback for the common case where digits get garbled.
+ */
+export async function extractWalkInFromTranscript(transcript: string): Promise<WalkInExtraction> {
+  // Single system-message approach — same pattern as analyzeMessage() which is proven
+  // to work on the GitHub Models endpoint. Few-shot via alternating user/assistant
+  // messages was causing the API to throw (endpoint limitation).
+  const systemPrompt = `You extract structured walk-in customer data from an Indian salesperson's voice note.
+The business could be a car showroom, appliance store, jewelry shop, etc.
+Transcripts mix English, Hindi, Hinglish, and Marathi.
+
+Return a JSON object with ONLY these keys (skip any field you cannot confidently extract — never invent data):
+  "customer_name"   — person's name. NEVER use a product name (e.g. not "Fortuner", "Faber", "Thar")
+  "customer_phone"  — exactly 10 digits, strip +91 or 91 prefix if present
+  "items_mentioned" — array of product/service names the customer discussed
+  "outcome"         — one of: "interested" | "will_decide" | "purchased" | "not_interested" | "follow_up"
+  "follow_up_hint"  — time hint the customer mentioned: "Sunday", "kal", "tomorrow", "next week", etc.
+  "staff_name"      — salesperson's own name if they said it
+  "notes"           — 1-sentence English summary of the visit (always write this if there is real content)
+
+Examples of correct extraction:
+INPUT:  "Rajesh Sharma 9876543210, Fortuner chahiye, Sunday tak decide karenge"
+OUTPUT: {"customer_name":"Rajesh Sharma","customer_phone":"9876543210","items_mentioned":["Fortuner"],"outcome":"will_decide","follow_up_hint":"Sunday","notes":"Interested in Fortuner; will decide by Sunday."}
+
+INPUT:  "Priya Patel ne Faber 60cm chimney pasand kiya, kal aayegi husband ke saath, phone 8800112233"
+OUTPUT: {"customer_name":"Priya Patel","customer_phone":"8800112233","items_mentioned":["Faber 60cm chimney"],"outcome":"will_decide","follow_up_hint":"tomorrow","notes":"Liked Faber 60cm chimney; returning tomorrow with husband."}
+
+INPUT:  "customer ne Thar test drive li, 18 lakh budget, financing chahiye, naam Amit Kumar 8765432190"
+OUTPUT: {"customer_name":"Amit Kumar","customer_phone":"8765432190","items_mentioned":["Thar"],"outcome":"interested","notes":"Test-drove Thar, ₹18L budget, needs financing."}
+
+Now extract from the following transcript:
+${transcript}`;
+
+  let raw = '{}';
+  try {
+    console.log('[ai-router] walk-in extraction starting, transcript:', JSON.stringify(transcript));
+    const completion = await withTimeout(
+      openai.chat.completions.create({
+        model: MODEL,
+        messages: [{ role: 'system', content: systemPrompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 300,
+      }),
+      15_000,
+      'walk-in extraction',
+    );
+
+    raw = completion.choices[0]?.message?.content || '{}';
+    console.log('[ai-router] walk-in extraction raw response:', raw);
+    const parsed = JSON.parse(raw);
+
+    // Phone: prefer GPT's value, fall back to regex on the transcript
+    let phone: string | undefined;
+    if (parsed.customer_phone) {
+      const phoneRaw = String(parsed.customer_phone).replace(/\D/g, '');
+      if (phoneRaw.length === 12 && phoneRaw.startsWith('91')) phone = phoneRaw.slice(2);
+      else if (phoneRaw.length >= 10) phone = phoneRaw.slice(-10);
+    }
+    if (!phone) phone = extractIndianPhoneFromText(transcript);
+
+    const outcome = typeof parsed.outcome === 'string' && (VALID_OUTCOMES as readonly string[]).includes(parsed.outcome)
+      ? parsed.outcome as WalkInExtraction['outcome']
+      : undefined;
+
+    // CRITICAL: notes stays empty if GPT didn't summarise. Do NOT fall back
+    // to the raw transcript — that's what caused the "AI dumps everything in
+    // notes" bug. The voice route uses notes-emptiness as a signal that
+    // extraction was incomplete.
+    // Name: prefer GPT value, fall back to regex extraction before the phone number
+    const gpName = parsed.customer_name?.toString().trim();
+    const customerName = gpName || extractNameFromTranscript(transcript);
+
+    return {
+      customer_name: customerName || undefined,
+      customer_phone: phone || undefined,
+      items_mentioned: Array.isArray(parsed.items_mentioned)
+        ? parsed.items_mentioned.map((s: any) => String(s)).filter(Boolean)
+        : [],
+      outcome,
+      follow_up_hint: parsed.follow_up_hint?.toString().trim() || undefined,
+      staff_name: parsed.staff_name?.toString().trim() || undefined,
+      notes: parsed.notes?.toString().trim() || '',
+    };
+  } catch (err: any) {
+    console.error('[ai-router] extractWalkInFromTranscript failed:', err.message, 'raw:', raw);
+    // Phone-only fallback so the form still gets at least one useful value
+    const phone = extractIndianPhoneFromText(transcript);
+    return {
+      items_mentioned: [],
+      customer_phone: phone,
+      notes: '',
+    };
+  }
+}

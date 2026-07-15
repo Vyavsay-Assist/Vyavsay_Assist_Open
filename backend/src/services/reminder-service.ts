@@ -1,4 +1,4 @@
-import { baileysAdapter } from './baileys-adapter.js';
+import { cloudClient as baileysAdapter } from './whatsapp-cloud-client.js';
 
 interface ScheduledReminder {
   userId: string;

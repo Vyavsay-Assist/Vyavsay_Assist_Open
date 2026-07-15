@@ -128,8 +128,8 @@ export const conversationRoutes: FastifyPluginAsync = async (server: FastifyInst
 
       if (convo.customer_jid) {
         try {
-          const { baileysAdapter } = await import('../services/baileys-adapter.js');
-          await baileysAdapter.sendMessage(request.userId, convo.customer_jid, body.content);
+          const { cloudClient } = await import('../services/whatsapp-cloud-client.js');
+          await cloudClient.sendMessage(request.userId, convo.customer_jid, body.content);
         } catch (err: any) {
           console.warn(`⚠️ Could not send via WhatsApp: ${err.message}`);
         }

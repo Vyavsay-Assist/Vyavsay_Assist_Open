@@ -1,5 +1,4 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import { sessionManager } from '../services/session-manager.js';
 import { reminderService } from '../services/reminder-service.js';
 
 const startTime = Date.now();
@@ -12,17 +11,9 @@ export const healthRoutes: FastifyPluginAsync = async (server: FastifyInstance) 
     const hours = Math.floor(uptimeMs / 3600000);
     const minutes = Math.floor((uptimeMs % 3600000) / 60000);
 
-    const sessions = sessionManager.getAllSessions();
-    const connected = sessions.filter(s => s.status === 'connected').length;
-
     return reply.send({
       status: 'ok',
       uptime: `${hours}h ${minutes}m`,
-      sessions: {
-        total: sessions.length,
-        connected,
-        disconnected: sessions.length - connected,
-      },
       activeReminders: reminderService.activeCount,
     });
   });
