@@ -51,18 +51,30 @@ export async function decideAndRetrieveNode(state: AgentState): Promise<AgentSta
   let capExceeded = false;
 
   for (let iteration = 0; iteration < MAX_LOOP_ITERATIONS && !escalated; iteration++) {
-    const response = await withAbortTimeout(DECIDE_TIMEOUT_MS, 'decide_and_retrieve', (signal) =>
-      agentOpenai.chat.completions.create(
-        {
-          model: AGENT_MODEL,
-          messages,
-          tools: TOOL_DEFINITIONS,
-          tool_choice: 'auto',
-          temperature: 0.2,
-        },
-        { signal }
-      )
-    );
+    let response;
+    try {
+      response = await withAbortTimeout(DECIDE_TIMEOUT_MS, 'decide_and_retrieve', (signal) =>
+        agentOpenai.chat.completions.create(
+          {
+            model: AGENT_MODEL,
+            messages,
+            tools: TOOL_DEFINITIONS,
+            tool_choice: 'auto',
+            temperature: 0.2,
+          },
+          { signal }
+        )
+      );
+    } catch (err: any) {
+      // A timed-out/failed decision call must not crash the whole graph run
+      // (Phase 4 found this: a slow completion here previously took down the
+      // entire message with no reply sent at all). Stop deciding for this
+      // turn and fall through to generate with whatever context was already
+      // retrieved (possibly none) — same fail-open behavior ai-router.ts
+      // already uses elsewhere on LLM failure.
+      console.error('❌ [agent/decide_and_retrieve] decision call failed:', err.message);
+      break;
+    }
 
     const choice = response.choices[0]?.message;
     if (!choice) break;
