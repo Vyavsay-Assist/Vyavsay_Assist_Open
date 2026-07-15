@@ -1,8 +1,59 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { verifyMetaSignature } from '../utils/webhook-signature.js';
-import { pipelineService } from '../services/pipeline-service.js';
+import { pipelineService, type MediaAttachment } from '../services/pipeline-service.js';
 import { cloudClient } from '../services/whatsapp-cloud-client.js';
 import { config } from '../config/environment.js';
+import { runAgentGraph } from '../agent/graph.js';
+
+/**
+ * GENAI_POC_PRD.md §5.6 rollout flag. Default false — the existing
+ * pipelineService.processIncomingMessage() path remains the default and is
+ * never modified by this branch. When true, routes through the new LangGraph
+ * agent graph instead, as a parallel path only.
+ */
+const USE_AGENT_GRAPH = process.env.USE_AGENT_GRAPH === 'true';
+
+/**
+ * Dispatches to the new agent graph or the existing pipeline depending on
+ * USE_AGENT_GRAPH. Centralized here so all 4 webhook call sites (text,
+ * audio, image, button/interactive) stay in sync without duplicating the
+ * flag check at each site.
+ */
+async function dispatchToPipeline(
+  userId: string,
+  customerJid: string,
+  customerName: string,
+  customerPhone: string,
+  messageText: string,
+  media?: MediaAttachment,
+): ReturnType<typeof pipelineService.processIncomingMessage> {
+  if (USE_AGENT_GRAPH) {
+    try {
+      const agentMedia = media?.type === 'voice_note'
+        ? (media.base64 ? { type: 'voice' as const, data: media.base64, mimetype: media.mimetype || 'audio/ogg' } : undefined)
+        : media?.type === 'image' && media.base64
+          ? { type: 'image' as const, data: media.base64, mimetype: media.mimetype || 'image/jpeg' }
+          : undefined;
+
+      const result = await runAgentGraph({
+        userId, customerJid, customerName, customerPhone, messageText, media: agentMedia,
+      });
+      return {
+        success: true,
+        autoReplied: !!result.replyDraft,
+        analysis: { intent: result.intent, confidence: result.confidence },
+        replyText: result.replyDraft,
+      };
+    } catch (err: any) {
+      console.error('[agent-graph] run failed:', err.message);
+      return { success: false, autoReplied: false, analysis: null };
+    }
+  }
+
+  return pipelineService.processIncomingMessage(
+    userId, customerJid, customerName, customerPhone, messageText, media,
+  );
+}
 
 export const webhookRoutes: FastifyPluginAsync = async (server: FastifyInstance) => {
 
