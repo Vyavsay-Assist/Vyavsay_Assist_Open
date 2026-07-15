@@ -8,6 +8,22 @@ import type {
   AgentEntities, AgentMedia, RetrievedContext, ToolCallLogEntry,
 } from './state.js';
 import type { BaseDomain } from '../domains/types.js';
+import type { AgentState, AgentStateUpdate } from './state.js';
+
+/** Wraps a node with latency tracking, folded into AgentState.nodeTimings for the reasoning_trace (§5.5). */
+function withTiming(name: string, fn: (state: AgentState) => Promise<AgentStateUpdate>) {
+  return async (state: AgentState): Promise<AgentStateUpdate> => {
+    const start = Date.now();
+    const update = await fn(state);
+    return {
+      ...update,
+      nodeTimings: [
+        ...state.nodeTimings,
+        { node: name, latencyMs: Date.now() - start, timestamp: new Date().toISOString() },
+      ],
+    };
+  };
+}
 
 /**
  * LangGraph channel definitions mirroring state.ts's AgentState interface.
@@ -66,11 +82,11 @@ export type AgentGraphState = typeof AgentStateAnnotation.State;
  */
 function buildGraph() {
   const graph = new StateGraph(AgentStateAnnotation)
-    .addNode('ingest', ingestNode)
-    .addNode('classify', classifyNode)
-    .addNode('decide_and_retrieve', decideAndRetrieveNode)
-    .addNode('generate', generateNode)
-    .addNode('persist', persistNode)
+    .addNode('ingest', withTiming('ingest', ingestNode))
+    .addNode('classify', withTiming('classify', classifyNode))
+    .addNode('decide_and_retrieve', withTiming('decide_and_retrieve', decideAndRetrieveNode))
+    .addNode('generate', withTiming('generate', generateNode))
+    .addNode('persist', withTiming('persist', persistNode))
     .addEdge(START, 'ingest')
     .addConditionalEdges(
       'ingest',

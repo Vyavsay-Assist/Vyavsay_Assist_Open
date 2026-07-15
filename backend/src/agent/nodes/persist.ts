@@ -92,10 +92,44 @@ async function upsertLead(
 }
 
 /**
+ * Builds the reasoning_trace JSONB array (GENAI_POC_PRD.md §5.5) from the
+ * per-node timings + tool call log accumulated in state. One entry per node
+ * that ran before persist (persist's own timing isn't included — it hasn't
+ * finished yet at the point this runs).
+ */
+function buildReasoningTrace(state: AgentState): Array<Record<string, unknown>> {
+  return state.nodeTimings.map((t) => {
+    const base = { node: t.node, latency_ms: t.latencyMs, timestamp: t.timestamp };
+    switch (t.node) {
+      case 'ingest':
+        return { ...base, decision: 'loaded user/conversation/history', input_summary: state.messageText.slice(0, 100) };
+      case 'classify':
+        return {
+          ...base,
+          decision: `intent=${state.intent}`,
+          output_summary: `confidence=${state.confidence}, entities=${JSON.stringify(state.entities || {})}`,
+        };
+      case 'decide_and_retrieve':
+        return {
+          ...base,
+          decision: state.escalated ? `escalated: ${state.escalationReasonFinal}` : `retrieved source=${state.retrievedContext?.source ?? 'none'}`,
+          tool_called: state.toolCallLog.map((tc) => tc.tool),
+          output_summary: JSON.stringify(state.toolCallLog.map((tc) => ({ tool: tc.tool, ok: tc.ok }))),
+        };
+      case 'generate':
+        return { ...base, decision: 'drafted reply', output_summary: (state.replyDraft || '').slice(0, 150) };
+      default:
+        return base;
+    }
+  });
+}
+
+/**
  * persist — write the reply to wb_messages, update lead/funnel state (mirrors
  * pipeline-service.ts's deterministic upsertLead/advanceFunnelStage — these
- * stay deterministic, not agentic, per GENAI_POC_PRD.md §5.2). Trace writing
- * (reasoning_trace column) is Phase 3 scope — Phase 1 only logs to console.
+ * stay deterministic, not agentic, per GENAI_POC_PRD.md §5.2). Writes
+ * reasoning_trace (migration 011) onto the AI reply row so any AI-replied
+ * message can be queried to see exactly why the agent replied what it did.
  */
 export async function persistNode(state: AgentState): Promise<AgentStateUpdate> {
   if (state.replyDraft) {
@@ -105,6 +139,7 @@ export async function persistNode(state: AgentState): Promise<AgentStateUpdate> 
         conversation_id: state.conversationId,
         sender: 'ai',
         content: state.replyDraft,
+        reasoning_trace: buildReasoningTrace(state),
       });
     } else {
       console.error(`[agent/persist] sendMessage failed for conversation=${state.conversationId} — reply not stored`);

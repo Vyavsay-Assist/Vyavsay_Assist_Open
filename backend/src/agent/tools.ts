@@ -173,17 +173,24 @@ async function execBookAppointment(args: any, state: AgentState): Promise<ToolEx
   };
 }
 
-async function execEscalateToHuman(args: any, state: AgentState): Promise<ToolExecutionResult> {
-  const reason = args.reason || 'Escalated by agent';
-
-  // Fixes the known ai_paused bug noted in GENAI_POC_PRD.md §5.3 — the old
-  // pipeline's complaint handoff sends a handoff message but never sets
-  // ai_paused, so auto-replies continue. This path sets it correctly,
-  // scoped only to the new agent graph (pipeline-service.ts untouched).
+/**
+ * Fixes the known ai_paused bug noted in GENAI_POC_PRD.md §5.3 — the old
+ * pipeline's complaint handoff sends a handoff message but never sets
+ * ai_paused, so auto-replies continue. This path sets it correctly,
+ * scoped only to the new agent graph (pipeline-service.ts untouched).
+ * Exported so decide-and-retrieve.ts's hard tool-call cap (§5.4) can force
+ * the same escalation without duplicating the DB write.
+ */
+export async function escalateConversation(conversationId: string, reason: string): Promise<void> {
   await agentSupabase
     .from('wb_conversations')
     .update({ ai_paused: true })
-    .eq('id', state.conversationId);
+    .eq('id', conversationId);
+}
+
+async function execEscalateToHuman(args: any, state: AgentState): Promise<ToolExecutionResult> {
+  const reason = args.reason || 'Escalated by agent';
+  await escalateConversation(state.conversationId, reason);
 
   return {
     envelope: { ok: true, data: { reason } },
