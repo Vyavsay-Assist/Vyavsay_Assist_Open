@@ -72,7 +72,14 @@ function buildGraph() {
     .addNode('generate', generateNode)
     .addNode('persist', persistNode)
     .addEdge(START, 'ingest')
-    .addEdge('ingest', 'classify')
+    .addConditionalEdges(
+      'ingest',
+      // GENAI_POC_PRD.md acceptance criterion #2: once escalate_to_human sets
+      // ai_paused, no further auto-reply should happen on later messages in
+      // that conversation. Deterministic gate, not an LLM decision.
+      (state: AgentGraphState) => (state.conversation?.ai_paused ? 'end' : 'classify'),
+      { classify: 'classify', end: END }
+    )
     .addEdge('classify', 'decide_and_retrieve')
     .addConditionalEdges(
       'decide_and_retrieve',

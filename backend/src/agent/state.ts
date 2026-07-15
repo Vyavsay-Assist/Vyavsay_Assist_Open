@@ -19,6 +19,20 @@ export interface ToolCallLogEntry {
 export interface RetrievedContext {
   source: 'inventory' | 'knowledge' | 'appointment' | 'none';
   items: unknown[];
+  /**
+   * Deterministic guidance string for the generate node — e.g. "these slots
+   * are available", "this appointment was booked". Mirrors the
+   * historyStrings.push('System: ...') pattern pipeline-service.ts already
+   * uses to steer generateReply() without changing its function signature.
+   */
+  systemNote?: string;
+}
+
+/** Typed envelope every tool call returns — never a thrown exception (GENAI_POC_PRD.md §5.3). */
+export interface ToolEnvelope<T = unknown> {
+  ok: boolean;
+  data?: T;
+  error?: string;
 }
 
 export interface AgentEntities {

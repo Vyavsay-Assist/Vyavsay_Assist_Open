@@ -9,6 +9,13 @@ import type { AgentState, AgentStateUpdate } from '../state.js';
 export async function generateNode(state: AgentState): Promise<AgentStateUpdate> {
   const historyStrings = state.history.map((m) => `${m.sender}: ${m.content}`);
 
+  // Mirrors pipeline-service.ts's historyStrings.push('System: ...') pattern
+  // for steering generateReply() on appointment availability/booking outcomes
+  // without changing that function's signature.
+  if (state.retrievedContext?.systemNote) {
+    historyStrings.push(state.retrievedContext.systemNote);
+  }
+
   const inventoryContext = state.retrievedContext?.source === 'inventory'
     ? { items: state.retrievedContext.items as any[] }
     : null;
