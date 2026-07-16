@@ -2,10 +2,6 @@
 
 🌐 **Live Demo:** [https://vyavsayassist.app/](https://vyavsayassist.app/)
 
-🔐 **Test Credentials:**
-- **Email:** `loyamahesh11@gmail.com`
-- **Password:** `VyavsayAssist`
-
 A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handles customer inquiries, scores leads, extracts tasks, and schedules appointments — all through WhatsApp.
 
 ## 🏗️ Architecture
@@ -52,8 +48,8 @@ A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handl
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/YourUser/Vyavsay_Baileys.git
-cd Vyavsay_Baileys
+git clone https://github.com/Vyavsay-Assist/Vyavsay_Assist_Open.git
+cd Vyavsay_Assist_Open
 
 # Backend
 cd backend && npm install
@@ -74,7 +70,7 @@ GITHUB_PAT=your-github-pat-for-ai
 AUTH_SESSIONS_DIR=./auth_sessions_v2/
 FRONTEND_URL=http://localhost:3004
 NODE_ENV=development
-OWNER_EMAILS=your.email@example.com
+OWNER_EMAILS=owner@example.com
 ```
 
 **Frontend** (`frontend/.env`):
@@ -82,26 +78,27 @@ OWNER_EMAILS=your.email@example.com
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 VITE_API_BASE_URL=http://localhost:3005/api
-VITE_OWNER_EMAILS=loyamahesh3@gmail.com
+VITE_OWNER_EMAILS=owner@example.com
 ```
 
 ### 3. Owner Dashboard Access
-Use the owner email `loyamahesh3@gmail.com` in both backend and frontend env files.
+Use your chosen owner email (e.g., `owner@example.com`) in both backend and frontend env files.
 
 After starting the app:
-1. Sign in with `loyamahesh3@gmail.com`.
+1. Sign in with the configured owner email address.
 2. Open **Settings**.
 3. Click **Open owner dashboard** under **Owner tools**.
 4. You can also open `http://localhost:3004/owner/dashboard` directly while logged in.
 
-If you see a 403 error, the email is not present in `OWNER_EMAILS` on the backend or `VITE_OWNER_EMAILS` on the frontend.
+If you see a 403 error, verify that the email matches exactly in `OWNER_EMAILS` on the backend and `VITE_OWNER_EMAILS` on the frontend.
 
 ### 4. Database Setup
-Run the migration SQL in Supabase SQL Editor:
+Run the migration SQL files in Supabase SQL Editor:
 ```bash
-# File: backend/database/migrations/001-schema.sql
+# Apply schema tables: backend/database/migrations/001-schema.sql
+# Apply additional schemas sequentially from backend/database/migrations/
 ```
-This creates all tables (`wb_users`, `wb_conversations`, `wb_messages`, `wb_leads`, `wb_tasks`, `wb_knowledge_base`) with pgvector indexes and the `wb_match_knowledge` RPC function. Voice call tracking adds `wb_calls` and `wb_call_actions` via `backend/database/migrations/005-voice-calls.sql`.
+These scripts create all tables (`wb_users`, `wb_conversations`, `wb_messages`, `wb_leads`, `wb_tasks`, `wb_knowledge_base`) with pgvector indexes and search RPC functions.
 
 ### 5. Run
 ```bash
@@ -125,59 +122,6 @@ cd frontend && npm run dev
    - Reply is sent automatically via Baileys.
 6. **CRM Dashboard** → Track conversations, leads, tasks, and analytics in real-time.
 
-## 📂 Project Structure
-
-```
-Vyavsay_Baileys/
-├── backend/
-│   ├── src/
-│   │   ├── config/           # Environment config
-│   │   ├── plugins/          # Fastify plugins (CORS, Supabase)
-│   │   ├── routes/           # API endpoints
-│   │   │   ├── session-routes.ts      # QR & session management
-│   │   │   ├── conversation-routes.ts # Chat history
-│   │   │   ├── lead-routes.ts         # Lead scoring
-│   │   │   ├── task-routes.ts         # Extracted tasks
-│   │   │   ├── knowledge-routes.ts    # Knowledge base CRUD
-│   │   │   ├── user-routes.ts         # User profile
-│   │   │   ├── health-routes.ts       # Analytics & health
-│   │   │   └── owner-routes.ts        # Owner-only aggregate dashboard
-│   │   ├── services/
-│   │   │   ├── session-manager.ts     # Baileys socket management
-│   │   │   ├── baileys-adapter.ts     # Message bridge
-│   │   │   ├── pipeline-service.ts    # AI orchestrator
-│   │   │   ├── ai-router.ts          # GPT-4o integration
-│   │   │   ├── rag-service.ts        # Vector search (pgvector)
-│   │   │   ├── cron-service.ts       # Scheduled follow-ups
-│   │   │   └── reminder-service.ts   # Appointment reminders
-│   │   ├── utils/             # Rate limiter
-│   │   └── server.ts          # Entry point
-│   ├── database/
-│   │   └── migrations/001-schema.sql
-│   └── package.json
-│
-├── frontend/
-│   ├── src/
-│   │   ├── api/client.ts      # Axios API client
-│   │   ├── context/           # Auth context
-│   │   ├── components/        # Sidebar, shared UI
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx
-│   │   │   ├── QRScanner.tsx
-│   │   │   ├── Conversations.tsx
-│   │   │   ├── Leads.tsx
-│   │   │   ├── Tasks.tsx
-│   │   │   ├── KnowledgeBase.tsx
-│   │   │   ├── Analytics.tsx
-│   │   │   ├── Settings.tsx
-│   │   │   ├── Onboarding.tsx
-│   │   │   └── Login.tsx
-│   │   └── App.tsx
-│   └── package.json
-│
-└── .gitignore
-```
-
 ## ⚠️ Baileys Safety Notes
 
 Baileys uses an **unofficial WhatsApp Web API** — use with caution:
@@ -188,5 +132,4 @@ Baileys uses an **unofficial WhatsApp Web API** — use with caution:
 
 ## 📜 License
 
-Private — All Rights Reserved.
-#
+This project is open-source and available under the [MIT License](LICENSE).
