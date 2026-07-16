@@ -11,8 +11,8 @@ A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handl
 │   Frontend (Vite + React)    │     │    Backend (Fastify + Node)     │
 │   Port: 3004                 │────▶│    Port: 3005                   │
 │                              │     │                                 │
-│  • Dashboard                 │     │  • Session Manager (Baileys)    │
-│  • QR Scanner                │     │  • AI Pipeline (GPT-4o)         │
+│  • Dashboard                 │     │  • WhatsApp Cloud API Client    │
+│  • QR Scanner                │     │  • AI Pipeline (GPT-4o-mini)    │
 │  • Conversations             │     │  • RAG Service (pgvector)       │
 │  • Leads Management          │     │  • Cron Service (Follow-ups)    │
 │  • Knowledge Base            │     │  • Reminder Service             │
@@ -21,8 +21,8 @@ A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handl
 │  • Onboarding                │     │        │  Supabase DB   │       │
 └──────────────────────────────┘     │        └────────────────┘       │
                                      │        ┌────────────────┐       │
-                                     │        │  WhatsApp Web  │       │
-                                     │        │  (via Baileys) │       │
+                                     │        │ WhatsApp Cloud │       │
+                                     │        │  API (Meta)    │       │
                                      │        └────────────────┘       │
                                      └─────────────────────────────────┘
 ```
@@ -33,8 +33,8 @@ A multi-tenant AI-powered WhatsApp Sales Assistant SaaS that automatically handl
 |-------------|---------------------------------------------|
 | Frontend    | React 18, Vite 6, TypeScript, Framer Motion |
 | Backend     | Fastify 5, TypeScript, tsx                   |
-| WhatsApp    | @whiskeysockets/baileys (v7 rc9)             |
-| AI          | GPT-4o via GitHub Models (Azure endpoint)    |
+| WhatsApp    | Meta WhatsApp Cloud API (official)           |
+| AI          | GPT-4o-mini (default) / GPT-4o via GitHub Models — configurable via `AI_MODEL` |
 | Database    | Supabase (PostgreSQL + pgvector)             |
 | Auth        | Supabase Auth (email/password)               |
 | Styling     | Custom CSS + Lucide Icons                    |
@@ -67,7 +67,11 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_STORAGE_BUCKET=catalog-images
 GITHUB_PAT=your-github-pat-for-ai
-AUTH_SESSIONS_DIR=./auth_sessions_v2/
+META_APP_SECRET=your-meta-app-secret
+META_WEBHOOK_VERIFY_TOKEN=your-webhook-verify-token
+META_PHONE_NUMBER_ID=your-phone-number-id
+META_SYSTEM_USER_TOKEN=your-system-user-token
+META_WABA_ID=your-waba-id
 FRONTEND_URL=http://localhost:3004
 NODE_ENV=development
 OWNER_EMAILS=owner@example.com
@@ -112,23 +116,23 @@ cd frontend && npm run dev
 ## 📱 How It Works
 
 1. **Onboarding** → New users fill in their Business Name, Industry, and Services.
-2. **QR Scan** → Link your WhatsApp number via QR code (Baileys).
+2. **Connect WhatsApp** → Link your official WhatsApp Business number via the Meta Cloud API (phone number ID + system user token).
 3. **Knowledge Base** → Upload your business FAQs, pricing, and services. Each entry is chunked and vectorized.
 4. **Product Images** → Add product photos directly from the dashboard. Images are uploaded to Supabase Storage and stored as public URLs on each catalog item.
 5. **Auto-Reply** → When a customer messages you on WhatsApp:
-   - Message is analyzed by GPT-4o for **intent** and **lead score**.
+   - Message is analyzed by GPT-4o-mini for **intent** and **lead score**.
    - RAG retrieves relevant **knowledge base** entries.
    - AI generates a **context-aware reply** using your business profile + knowledge.
-   - Reply is sent automatically via Baileys.
+   - Reply is sent automatically via the Meta Cloud API.
 6. **CRM Dashboard** → Track conversations, leads, tasks, and analytics in real-time.
 
-## ⚠️ Baileys Safety Notes
+## ⚠️ WhatsApp Messaging Notes
 
-Baileys uses an **unofficial WhatsApp Web API** — use with caution:
+This project uses the **official Meta WhatsApp Cloud API**, not an unofficial client:
 - **Rate Limit**: Built-in rate limiter ensures messages are spaced out.
-- **Don't spam**: Only reply to incoming messages. Never send unsolicited bulk messages.
-- **Use a dedicated number**: Don't use your personal WhatsApp for this.
-- **Session Persistence**: Auth sessions are stored in `auth_sessions_v2/` — no need to re-scan QR after server restart if sessions are preserved.
+- **Don't spam**: Only reply to incoming messages. Never send unsolicited bulk messages — this also risks your Meta Business account.
+- **Webhook Verification**: Incoming payloads are verified via HMAC-SHA256 (`x-hub-signature-256`) against `META_APP_SECRET` before processing.
+- **Per-Tenant Credentials**: Each business's `phone_number_id` and access token are stored in `wb_waba_accounts`, with env vars as a single-tenant/dev fallback.
 
 ## 📜 License
 
